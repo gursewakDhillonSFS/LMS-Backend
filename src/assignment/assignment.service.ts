@@ -105,6 +105,7 @@ export class AssignmentService {
     tab: 'ongoing' | 'past' = 'ongoing',
     page = 1,
     limit = 10,
+    studentId?: string,
   ) {
     const skip = (page - 1) * limit;
 
@@ -130,14 +131,25 @@ export class AssignmentService {
       this.assignmentModel.countDocuments(filter),
     ]);
 
-    // For each assignment, compute submission counts
     const enriched = await Promise.all(
       assignments.map(async (a) => {
         const submittedCount = await this.submissionModel.countDocuments({
           assignmentId: a._id,
           status: { $in: ['Submitted', 'Graded'] },
         });
-        return { ...this.formatAssignment(a), submittedCount };
+
+        let studentSubmission: { status: string; result: string | null } | null = null;
+        if (studentId) {
+          const sub = await this.submissionModel.findOne({
+            assignmentId: a._id,
+            studentId: new Types.ObjectId(studentId),
+          });
+          if (sub) {
+            studentSubmission = { status: sub.status, result: sub.result };
+          }
+        }
+
+        return { ...this.formatAssignment(a), submittedCount, studentSubmission };
       }),
     );
 
@@ -359,6 +371,40 @@ export class AssignmentService {
         lastAssignmentDate: latest?.dueDate
           ? new Date(latest.dueDate).toLocaleDateString('en-GB')
           : null,
+      },
+    };
+  }
+
+  // ─── Submit Assignment (Student) ─────────────────────────────────────────────
+  async submitAssignment(
+    assignmentId: string,
+    studentId: string,
+    submittedText: string,
+  ) {
+    const assignment = await this.assignmentModel.findById(assignmentId);
+    if (!assignment) throw new NotFoundException('Assignment not found');
+
+    const submission = await this.submissionModel.findOneAndUpdate(
+      {
+        assignmentId: new Types.ObjectId(assignmentId),
+        studentId: new Types.ObjectId(studentId),
+      },
+      {
+        $set: {
+          submittedText,
+          status: 'Submitted',
+          dateOfSubmit: new Date(),
+        },
+      },
+      { upsert: true, new: true },
+    );
+
+    return {
+      status: true,
+      message: 'Assignment submitted successfully',
+      data: {
+        submission_id: String(submission._id),
+        status: submission.status,
       },
     };
   }

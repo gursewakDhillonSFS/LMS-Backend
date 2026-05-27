@@ -39,13 +39,16 @@ export class AssignmentController {
     @Query('tab') tab: 'ongoing' | 'past' = 'ongoing',
     @Query('page') page?: string,
     @Query('limit') limit?: string,
+    @Req() req?: AuthenticatedRequest,
   ) {
+    const studentId = req?.user?.userId;
     return this.assignmentService.findByBatch(
       batchId,
       courseId,
       tab,
       page ? parseInt(page) : 1,
       limit ? parseInt(limit) : 10,
+      studentId,
     );
   }
 
@@ -101,5 +104,16 @@ export class AssignmentController {
   @Post('submissions/grade')
   gradeSubmission(@Body() dto: GradeSubmissionDto) {
     return this.assignmentService.gradeSubmission(dto);
+  }
+
+  // POST /auth/assignment/v1/:id/submit
+  @Post(':id/submit')
+  submitAssignment(
+    @Param('id') id: string,
+    @Body() dto: { submittedText: string },
+    @Req() req: AuthenticatedRequest,
+  ) {
+    const studentId = req.user.userId;
+    return this.assignmentService.submitAssignment(id, studentId, dto.submittedText);
   }
 }

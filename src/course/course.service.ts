@@ -19,6 +19,10 @@ import {
 } from '../category/schemas/category.schema';
 import { CloudinaryService } from '../cloudinary/cloudinary.service';
 import {
+  CourseProgress,
+  CourseProgressDocument,
+} from './schemas/course-progress.schema';
+import {
   CreateStep1Dto,
   CreateStep2Dto,
   CreateStep3Dto,
@@ -49,6 +53,8 @@ export class CourseService {
     @InjectModel(Teacher.name) private teacherModel: Model<TeacherDocument>,
     @InjectModel(User.name) private userModel: Model<UserDocument>,
     @InjectModel(Category.name) private categoryModel: Model<CategoryDocument>,
+    @InjectModel(CourseProgress.name)
+    private progressModel: Model<CourseProgressDocument>,
     private readonly cloudinary: CloudinaryService,
     @InjectConnection() private readonly connection: Connection,
   ) {}
@@ -1727,7 +1733,7 @@ export class CourseService {
           batch_id: e.batch_id?.toString() || '',
           course_name: c.course_name,
           course_image_url: c.course_image_url || '',
-          progress: 25, // Mock initial progress
+          progress: await this.getProgressPercent(userId, c._id.toString(), e.batch_id?.toString() || ''),
           name: headTeacher
             ? `${(headTeacher as unknown as { firstName?: string; lastName?: string }).firstName || ''} ${(headTeacher as unknown as { firstName?: string; lastName?: string }).lastName || ''}`.trim()
             : 'Instructor',
@@ -1758,5 +1764,153 @@ export class CourseService {
       .sort({ createdAt: -1 })
       .lean();
     return { status: true, data: reviews };
+  }
+
+  // ─────────────────────────────────────────────────────────────────────────
+  // COURSE PROGRESS TRACKING
+  // ─────────────────────────────────────────────────────────────────────────
+
+  /** Internal helper: compute and persist progress_percent */
+  private async recomputeProgress(
+    studentId: string,
+    courseId: string,
+    batchId: string,
+  ): Promise<number> {
+    const progress = await this.progressModel.findOne({
+      student_id: new Types.ObjectId(studentId),
+      course_id: new Types.ObjectId(courseId),
+      batch_id: batchId,
+    });
+    if (!progress) return 0;
+
+    // Count total items in this course for this batch
+    const [totalLessons, totalSublessons, totalAssignments, totalQuizzes] =
+      await Promise.all([
+        this.lessonModel.countDocuments({
+          course_id: new Types.ObjectId(courseId),
+        }),
+        this.subLessonModel.countDocuments({
+          course_id: new Types.ObjectId(courseId),
+        }),
+        this.connection
+          .collection('assignments')
+          .countDocuments({ courseId: new Types.ObjectId(courseId), batchId, status: 'published' }),
+        this.connection
+          .collection('quizzes')
+          .countDocuments({ courseId: new Types.ObjectId(courseId), batchId, status: 'published' }),
+      ]);
+
+    const totalItems = totalLessons + totalSublessons + totalAssignments + totalQuizzes;
+    if (totalItems === 0) return 0;
+
+    const completedItems =
+      progress.completed_lessons.length +
+      progress.completed_sublessons.length +
+      progress.completed_assignments.length +
+      progress.completed_quizzes.length;
+
+    const percent = Math.round((completedItems / totalItems) * 100);
+    const completedAt = percent >= 100 ? new Date() : null;
+
+    await this.progressModel.findByIdAndUpdate(progress._id, {
+      $set: { progress_percent: percent, completed_at: completedAt },
+    });
+
+    return percent;
+  }
+
+  /** Internal helper: get persisted progress % without recomputing */
+  private async getProgressPercent(
+    studentId: string,
+    courseId: string,
+    batchId: string,
+  ): Promise<number> {
+    const p = await this.progressModel.findOne({
+      student_id: new Types.ObjectId(studentId),
+      course_id: new Types.ObjectId(courseId),
+      batch_id: batchId,
+    });
+    return p?.progress_percent ?? 0;
+  }
+
+  /** GET /auth/course/v1/progress — student's own progress */
+  async getCourseProgress(studentId: string, courseId: string, batchId: string) {
+    // Ensure record exists
+    await this.progressModel.findOneAndUpdate(
+      {
+        student_id: new Types.ObjectId(studentId),
+        course_id: new Types.ObjectId(courseId),
+        batch_id: batchId,
+      },
+      { $setOnInsert: { completed_lessons: [], completed_sublessons: [], completed_assignments: [], completed_quizzes: [], progress_percent: 0, completed_at: null } },
+      { upsert: true, new: true },
+    );
+
+    const percent = await this.recomputeProgress(studentId, courseId, batchId);
+    const doc = await this.progressModel.findOne({
+      student_id: new Types.ObjectId(studentId),
+      course_id: new Types.ObjectId(courseId),
+      batch_id: batchId,
+    });
+
+    return {
+      status: true,
+      data: {
+        progress_percent: percent,
+        completed_lessons: (doc?.completed_lessons || []).map(String),
+        completed_sublessons: (doc?.completed_sublessons || []).map(String),
+        completed_assignments: (doc?.completed_assignments || []).map(String),
+        completed_quizzes: (doc?.completed_quizzes || []).map(String),
+        completed_at: doc?.completed_at || null,
+      },
+    };
+  }
+
+  /** POST /auth/course/v1/progress/complete-lesson */
+  async markLessonComplete(
+    studentId: string,
+    lessonId: string,
+    courseId: string,
+    batchId: string,
+  ) {
+    await this.progressModel.findOneAndUpdate(
+      {
+        student_id: new Types.ObjectId(studentId),
+        course_id: new Types.ObjectId(courseId),
+        batch_id: batchId,
+      },
+      {
+        $addToSet: { completed_lessons: new Types.ObjectId(lessonId) },
+        $setOnInsert: { completed_sublessons: [], completed_assignments: [], completed_quizzes: [], progress_percent: 0, completed_at: null },
+      },
+      { upsert: true, new: true },
+    );
+
+    const percent = await this.recomputeProgress(studentId, courseId, batchId);
+    return { status: true, message: 'Lesson marked complete', data: { progress_percent: percent } };
+  }
+
+  /** POST /auth/course/v1/progress/complete-sublesson */
+  async markSublessonComplete(
+    studentId: string,
+    sublessonId: string,
+    courseId: string,
+    batchId: string,
+  ) {
+    await this.progressModel.findOneAndUpdate(
+      {
+        student_id: new Types.ObjectId(studentId),
+        course_id: new Types.ObjectId(courseId),
+        batch_id: batchId,
+      },
+      {
+        $addToSet: { completed_sublessons: new Types.ObjectId(sublessonId) },
+        $setOnInsert: { completed_lessons: [], completed_assignments: [], completed_quizzes: [], progress_percent: 0, completed_at: null },
+      },
+      { upsert: true, new: true },
+    );
+
+    const percent = await this.recomputeProgress(studentId, courseId, batchId);
+    return { status: true, message: 'Sub-lesson marked complete', data: { progress_percent: percent } };
   }
 }

@@ -463,4 +463,52 @@ export class CourseController {
     const userId = req.user.userId;
     return this.courseService.getEnrolledCourses(userId, query);
   }
+
+  // ─────────────────────────────────────────────────────────────────────────
+  // PROGRESS TRACKING
+  // ─────────────────────────────────────────────────────────────────────────
+
+  /** GET /auth/course/v1/progress?course_id=&batch_id= */
+  @UseGuards(JwtAuthGuard)
+  @Get('progress')
+  async getCourseProgress(
+    @Query('course_id') courseId: string,
+    @Query('batch_id') batchId: string,
+    @Req() req: AuthenticatedRequest,
+  ) {
+    const studentId = req.user.userId;
+    return this.courseService.getCourseProgress(studentId, courseId, batchId);
+  }
+
+  /** POST /auth/course/v1/progress/complete-lesson */
+  @UseGuards(JwtAuthGuard)
+  @Post('progress/complete-lesson')
+  async markLessonComplete(
+    @Body() dto: { lesson_id: string; course_id: string; batch_id: string },
+    @Req() req: AuthenticatedRequest,
+  ) {
+    const studentId = req.user.userId;
+    return this.courseService.markLessonComplete(
+      studentId,
+      dto.lesson_id,
+      dto.course_id,
+      dto.batch_id,
+    );
+  }
+
+  /** POST /auth/course/v1/progress/complete-sublesson */
+  @UseGuards(JwtAuthGuard)
+  @Post('progress/complete-sublesson')
+  async markSublessonComplete(
+    @Body() dto: { sublesson_id: string; course_id: string; batch_id: string },
+    @Req() req: AuthenticatedRequest,
+  ) {
+    const studentId = req.user.userId;
+    return this.courseService.markSublessonComplete(
+      studentId,
+      dto.sublesson_id,
+      dto.course_id,
+      dto.batch_id,
+    );
+  }
 }

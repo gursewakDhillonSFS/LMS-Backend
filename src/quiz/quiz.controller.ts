@@ -31,19 +31,24 @@ export class QuizController {
     return this.quizService.create(dto, userId);
   }
 
-  // GET /auth/quiz/v1/by-batch?batchId=&tab=ongoing&page=1&limit=10
+  // GET /auth/quiz/v1/by-batch?batchId=&tab=ongoing&page=1&limit=10&courseId=
   @Get('by-batch')
   findByBatch(
     @Query('batchId') batchId: string,
     @Query('tab') tab: 'ongoing' | 'past' = 'ongoing',
     @Query('page') page = '1',
     @Query('limit') limit = '10',
+    @Query('courseId') courseId?: string,
+    @Req() req?: AuthenticatedRequest,
   ) {
+    const studentId = req?.user?.userId;
     return this.quizService.findByBatch(
       batchId,
       tab,
       Number(page),
       Number(limit),
+      studentId,
+      courseId,
     );
   }
 
@@ -99,5 +104,24 @@ export class QuizController {
   @Post('submissions/grade')
   gradeSubmission(@Body() dto: GradeQuizSubmissionDto) {
     return this.quizService.gradeSubmission(dto);
+  }
+
+  // POST /auth/quiz/v1/:id/submit
+  @Post(':id/submit')
+  submitQuiz(
+    @Param('id') id: string,
+    @Body()
+    dto: {
+      answers: {
+        questionIndex: number;
+        questionType: 'mcq' | 'essay';
+        selectedOption?: string;
+        submittedText?: string;
+      }[];
+    },
+    @Req() req: AuthenticatedRequest,
+  ) {
+    const studentId = req.user.userId;
+    return this.quizService.submitQuiz(id, studentId, dto.answers);
   }
 }

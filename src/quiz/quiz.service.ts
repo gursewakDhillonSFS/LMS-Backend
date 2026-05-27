@@ -104,6 +104,8 @@ export class QuizService {
     tab: 'ongoing' | 'past' = 'ongoing',
     page = 1,
     limit = 10,
+    studentId?: string,
+    courseId?: string,
   ) {
     const skip = (page - 1) * limit;
 
@@ -116,6 +118,9 @@ export class QuizService {
         : { dueDate: { $lt: startOfToday } };
 
     const filter: Record<string, unknown> = { batchId, ...dateFilter };
+    if (courseId && Types.ObjectId.isValid(courseId)) {
+      filter.courseId = new Types.ObjectId(courseId);
+    }
 
     const [quizzes, total] = await Promise.all([
       this.quizModel
@@ -132,12 +137,23 @@ export class QuizService {
           quizId: q._id,
           status: { $in: ['Submitted', 'Graded'] },
         });
-        // Total marks = sum of all question marks
         const totalMarks = (q.questions || []).reduce(
           (sum, qu) => sum + (qu.marks || 0),
           0,
         );
-        return { ...this.formatQuiz(q), submittedCount, totalMarks };
+
+        let studentSubmission: { status: string; obtainedScore: number; totalMarks: number } | null = null;
+        if (studentId) {
+          const sub = await this.submissionModel.findOne({
+            quizId: q._id,
+            studentId: new Types.ObjectId(studentId),
+          });
+          if (sub) {
+            studentSubmission = { status: sub.status, obtainedScore: sub.obtainedScore, totalMarks };
+          }
+        }
+
+        return { ...this.formatQuiz(q), submittedCount, totalMarks, studentSubmission };
       }),
     );
 
@@ -360,6 +376,80 @@ export class QuizService {
         lastQuizDate: latest?.dueDate
           ? new Date(latest.dueDate).toLocaleDateString('en-GB')
           : null,
+      },
+    };
+  }
+
+  // ─── Submit Quiz (Student) ────────────────────────────────────────────────────
+  async submitQuiz(
+    quizId: string,
+    studentId: string,
+    answers: {
+      questionIndex: number;
+      questionType: 'mcq' | 'essay';
+      selectedOption?: string;
+      submittedText?: string;
+    }[],
+  ) {
+    const quiz = await this.quizModel.findById(quizId);
+    if (!quiz) throw new NotFoundException('Quiz not found');
+
+    const totalMarks = (quiz.questions || []).reduce(
+      (sum, q) => sum + (q.marks || 0),
+      0,
+    );
+
+    // Auto-grade each answer
+    const gradedAnswers = answers.map((a) => {
+      const question = quiz.questions[a.questionIndex];
+      let isCorrect = false;
+      let obtainedMarks = 0;
+
+      if (question && a.questionType === 'mcq') {
+        isCorrect = a.selectedOption === question.correctOption;
+        obtainedMarks = isCorrect ? (question.marks || 0) : 0;
+      }
+
+      return {
+        questionIndex: a.questionIndex,
+        questionType: a.questionType,
+        selectedOption: a.selectedOption || '',
+        submittedText: a.submittedText || '',
+        isCorrect,
+        obtainedMarks,
+      };
+    });
+
+    const obtainedScore = gradedAnswers.reduce(
+      (sum, a) => sum + a.obtainedMarks,
+      0,
+    );
+
+    const submission = await this.submissionModel.findOneAndUpdate(
+      {
+        quizId: new Types.ObjectId(quizId),
+        studentId: new Types.ObjectId(studentId),
+      },
+      {
+        $set: {
+          answers: gradedAnswers,
+          totalMarks,
+          obtainedScore,
+          status: 'Submitted',
+          dateOfSubmit: new Date(),
+        },
+      },
+      { upsert: true, new: true },
+    );
+
+    return {
+      status: true,
+      message: 'Quiz submitted successfully',
+      data: {
+        submission_id: String(submission._id),
+        obtainedScore,
+        totalMarks,
+        status: submission.status,
       },
     };
   }
