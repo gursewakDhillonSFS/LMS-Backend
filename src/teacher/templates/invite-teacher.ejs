@@ -1,0 +1,77 @@
+<!DOCTYPE html>
+<html>
+<head>
+    <meta charset="utf-8">
+    <meta http-equiv="x-ua-compatible" content="ie=edge">
+    <title>Welcome to Learning+ - Set Up Your Account</title>
+    <meta name="viewport" content="width=device-width, initial-scale=1">
+    <style type="text/css">
+        body, table, td, a { -ms-text-size-adjust: 100%; -webkit-text-size-adjust: 100%; }
+        table, td { mso-table-rspace: 0pt; mso-table-lspace: 0pt; }
+        img { -ms-interpolation-mode: bicubic; }
+        body { font-family: 'Segoe UI', Helvetica, Arial, sans-serif; background-color: #F3F4F6; margin: 0; padding: 0; width: 100% !important; }
+        a[x-apple-data-detectors] { color: inherit !important; text-decoration: none !important; font-size: inherit !important; font-family: inherit !important; font-weight: inherit !important; line-height: inherit !important; }
+        .wrapper { width: 100%; table-layout: fixed; background-color: #F3F4F6; padding-bottom: 40px; }
+        .main { background-color: #ffffff; max-width: 600px; margin: 0 auto; border-radius: 16px; overflow: hidden; box-shadow: 0 4px 12px rgba(0, 0, 0, 0.05); }
+        .header { background: linear-gradient(135deg, #1A2B49 0%, #0D172A 100%); padding: 40px; text-align: center; color: #ffffff; }
+        .header h1 { margin: 0; font-size: 28px; font-weight: 700; letter-spacing: -0.5px; }
+        .content { padding: 40px; color: #374151; line-height: 1.6; }
+        .content h2 { margin-top: 0; font-size: 22px; color: #111827; font-weight: 600; }
+        .content p { margin-bottom: 24px; font-size: 16px; }
+        .button-container { text-align: center; margin: 36px 0; }
+        .button { display: inline-block; background-color: #007BFF; color: #ffffff !important; text-decoration: none; padding: 14px 32px; border-radius: 8px; font-weight: 600; font-size: 16px; box-shadow: 0 4px 6px rgba(0, 123, 255, 0.2); transition: background-color 0.2s ease; }
+        .footer { text-align: center; padding: 24px; font-size: 14px; color: #6B7280; }
+        .divider { height: 1px; background-color: #E5E7EB; margin: 32px 0; }
+        .info-box { background-color: #F9FAFB; border-left: 4px solid #007BFF; padding: 16px; border-radius: 4px; margin-bottom: 24px; }
+    </style>
+</head>
+<body>
+    <center class="wrapper">
+        <table class="main" width="100%" cellpadding="0" cellspacing="0">
+            <!-- Header -->
+            <tr>
+                <td class="header">
+                    <h1>Learning+</h1>
+                </td>
+            </tr>
+            <!-- Body -->
+            <tr>
+                <td class="content">
+                    <h2>Hello <%= name %>,</h2>
+                    <p>You have been invited by <strong><%= organisationName %></strong> to join the team as an official Instructor/Teacher.</p>
+                    
+                    <div class="info-box">
+                        We are thrilled to have you! To complete your registration and secure your dashboard access, please activate your account and set up your personal password.
+                    </div>
+                    
+                    <p>This secure setup link will be valid for the next 48 hours:</p>
+                    
+                    <div class="button-container">
+                        <!--[if mso]>
+                        <v:roundrect xmlns:v="urn:schemas-microsoft-com:vml" xmlns:w="urn:schemas-microsoft-com:office:word" href="<%= setupLink %>" style="height:50px;v-text-anchor:middle;width:220px;" arcsize="16%" stroke="f" fillcolor="#007BFF">
+                          <w:anchorlock/>
+                          <center style="color:#ffffff;font-family:sans-serif;font-size:16px;font-weight:bold;">Set Up Account</center>
+                        </v:roundrect>
+                        <![endif]-->
+                        <a href="<%= setupLink %>" class="button" style="color: white;">Set Up Your Account</a>
+                    </div>
+                    
+                    <p style="font-size: 14px; color: #6B7280;">If the button above does not work, please copy and paste the following URL into your browser:</p>
+                    <p style="font-size: 13px; word-break: break-all; background-color: #F3F4F6; padding: 12px; border-radius: 6px;"><a href="<%= setupLink %>" style="color: #007BFF;"><%= setupLink %></a></p>
+                    
+                    <div class="divider"></div>
+                    <p style="font-size: 14px; color: #6B7280; text-align: center; margin-bottom: 0;">
+                        If you did not expect this invitation, you can safely ignore this email.
+                    </p>
+                </td>
+            </tr>
+            <!-- Footer -->
+            <tr>
+                <td class="footer">
+                    &copy; <%= new Date().getFullYear() %> Learning+ Platform. All rights reserved.
+                </td>
+            </tr>
+        </table>
+    </center>
+</body>
+</html>
