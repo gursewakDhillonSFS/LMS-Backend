@@ -14,7 +14,7 @@ export class CloudinaryService {
         return;
       }
       const uploadStream = cloudinary.uploader.upload_stream(
-        { folder, resource_type: 'auto' },
+        { folder, resource_type: 'auto', type: 'upload', access_mode: 'public' },
         (error, result) => {
           if (error) return reject(error);
           if (!result) return reject(new Error('Upload failed: no result'));

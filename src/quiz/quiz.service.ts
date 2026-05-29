@@ -117,7 +117,16 @@ export class QuizService {
         ? { dueDate: { $gte: startOfToday } }
         : { dueDate: { $lt: startOfToday } };
 
-    const filter: Record<string, unknown> = { batchId, ...dateFilter };
+    const filter: Record<string, unknown> = { ...dateFilter };
+    
+    // If batchId is provided, match either the specific batch or the whole course (empty/null)
+    if (batchId) {
+      filter.$or = [
+        { batchId: batchId },
+        { batchId: '' },
+        { batchId: null }
+      ];
+    }
     if (courseId && Types.ObjectId.isValid(courseId)) {
       filter.courseId = new Types.ObjectId(courseId);
     }

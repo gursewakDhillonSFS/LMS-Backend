@@ -120,7 +120,17 @@ export class AssignmentService {
         : { dueDate: { $lt: startOfToday } };
 
     // Filter by batchId; courseId is included as a string match to narrow scope
-    const filter: Record<string, unknown> = { batchId, ...dateFilter };
+    const filter: Record<string, unknown> = { ...dateFilter };
+    if (batchId) {
+      filter.$or = [
+        { batchId: batchId },
+        { batchId: '' },
+        { batchId: null }
+      ];
+    }
+    if (courseId) {
+      filter.courseId = new Types.ObjectId(courseId);
+    }
 
     const [assignments, total] = await Promise.all([
       this.assignmentModel

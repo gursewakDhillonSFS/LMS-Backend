@@ -157,6 +157,40 @@ export class AnnouncementService {
     };
   }
 
+  // ─── Find for Multiple Courses ─────────────────────────────────────────────
+  async findByCourses(courses: { courseId: string; batchId?: string }[]) {
+    if (!courses || courses.length === 0) {
+      return { status: true, data: { announcements: [] } };
+    }
+
+    const orConditions = courses.map(c => {
+      const cond: Record<string, any> = { courseId: new Types.ObjectId(c.courseId) };
+      if (c.batchId) {
+        cond.$or = [{ batchId: null }, { batchId: '' }, { batchId: c.batchId }];
+      }
+      return cond;
+    });
+
+    const filter = {
+      status: 'published',
+      $or: orConditions
+    };
+
+    const announcements = await this.announcementModel
+      .find(filter as any)
+      .sort({ publishedAt: -1, createdAt: -1 })
+      .limit(30);
+
+    const enriched = await Promise.all(
+      announcements.map((ann) => this.formatAnnouncement(ann)),
+    );
+
+    return {
+      status: true,
+      data: { announcements: enriched }
+    };
+  }
+
   // ─── Find for all Instructor Courses (Aggregated list) ────────────────────
   async findByInstructor(
     instructorId: string,

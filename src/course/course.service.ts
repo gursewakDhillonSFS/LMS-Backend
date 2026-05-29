@@ -1766,6 +1766,32 @@ export class CourseService {
     return { status: true, data: reviews };
   }
 
+  async createCourseReview(userId: string, userName: string, courseId: string, rating: number, reviewText: string) {
+    if (!Types.ObjectId.isValid(courseId)) {
+      throw new BadRequestException('Invalid courseId format');
+    }
+    
+    // Check if user already reviewed
+    const existing = await this.reviewModel.findOne({ 
+      user_id: new Types.ObjectId(userId), 
+      course_id: new Types.ObjectId(courseId) 
+    });
+    
+    if (existing) {
+      throw new BadRequestException('You have already reviewed this course.');
+    }
+
+    const review = await this.reviewModel.create({
+      user_id: new Types.ObjectId(userId),
+      course_id: new Types.ObjectId(courseId),
+      rating,
+      review: reviewText,
+      user_name: userName,
+    });
+
+    return { status: true, message: 'Review created successfully', data: review };
+  }
+
   // ─────────────────────────────────────────────────────────────────────────
   // COURSE PROGRESS TRACKING
   // ─────────────────────────────────────────────────────────────────────────

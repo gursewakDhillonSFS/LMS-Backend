@@ -50,6 +50,12 @@ export class AnnouncementController {
     );
   }
 
+  // POST /auth/announcement/v1/by-courses
+  @Post('by-courses')
+  findByCourses(@Body() dto: { courses: { courseId: string; batchId?: string }[] }) {
+    return this.announcementService.findByCourses(dto.courses || []);
+  }
+
   // GET /auth/announcement/v1/by-instructor?tab=announcement&page=1&limit=10&search=
   @Get('by-instructor')
   findByInstructor(
