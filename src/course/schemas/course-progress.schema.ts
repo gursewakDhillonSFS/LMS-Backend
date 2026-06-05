@@ -20,6 +20,9 @@ export class CourseProgress {
   @Prop({ type: [Types.ObjectId], default: [] })
   completed_sublessons: Types.ObjectId[];
 
+  @Prop({ type: [String], default: [] })
+  completed_materials: string[];
+
   @Prop({ type: [Types.ObjectId], default: [] })
   completed_assignments: Types.ObjectId[];
 

@@ -1866,7 +1866,6 @@ export class CourseService {
   // COURSE PROGRESS TRACKING
   // ─────────────────────────────────────────────────────────────────────────
 
-  /** Internal helper: compute and persist progress_percent */
   private async recomputeProgress(
     studentId: string,
     courseId: string,
@@ -1879,15 +1878,10 @@ export class CourseService {
     });
     if (!progress) return 0;
 
-    // Count total items in this course for this batch
-    const [totalLessons, totalSublessons, totalAssignments, totalQuizzes] =
+    const [lessons, sublessons, totalAssignments, totalQuizzes] =
       await Promise.all([
-        this.lessonModel.countDocuments({
-          course_id: new Types.ObjectId(courseId),
-        }),
-        this.subLessonModel.countDocuments({
-          course_id: new Types.ObjectId(courseId),
-        }),
+        this.lessonModel.find({ course_id: new Types.ObjectId(courseId) }).lean(),
+        this.subLessonModel.find({ course_id: new Types.ObjectId(courseId) }).lean(),
         this.connection
           .collection('assignments')
           .countDocuments({ courseId: new Types.ObjectId(courseId), batchId, status: 'published' }),
@@ -1896,14 +1890,17 @@ export class CourseService {
           .countDocuments({ courseId: new Types.ObjectId(courseId), batchId, status: 'published' }),
       ]);
 
-    const totalItems = totalLessons + totalSublessons + totalAssignments + totalQuizzes;
+    let totalMaterialCount = 0;
+    lessons.forEach(l => { totalMaterialCount += (l.studyMaterials || []).length; });
+    sublessons.forEach(s => { totalMaterialCount += (s.studyMaterials || []).length; });
+
+    const totalItems = totalMaterialCount + totalAssignments + totalQuizzes;
     if (totalItems === 0) return 0;
 
     const completedItems =
-      progress.completed_lessons.length +
-      progress.completed_sublessons.length +
-      progress.completed_assignments.length +
-      progress.completed_quizzes.length;
+      (progress.completed_materials?.length || 0) +
+      (progress.completed_assignments?.length || 0) +
+      (progress.completed_quizzes?.length || 0);
 
     const percent = Math.round((completedItems / totalItems) * 100);
     const completedAt = percent >= 100 ? new Date() : null;
@@ -1938,7 +1935,7 @@ export class CourseService {
         course_id: new Types.ObjectId(courseId),
         batch_id: batchId,
       },
-      { $setOnInsert: { completed_lessons: [], completed_sublessons: [], completed_assignments: [], completed_quizzes: [], progress_percent: 0, completed_at: null } },
+      { $setOnInsert: { completed_materials: [], completed_assignments: [], completed_quizzes: [], progress_percent: 0, completed_at: null } },
       { upsert: true, new: true },
     );
 
@@ -1953,8 +1950,7 @@ export class CourseService {
       status: true,
       data: {
         progress_percent: percent,
-        completed_lessons: (doc?.completed_lessons || []).map(String),
-        completed_sublessons: (doc?.completed_sublessons || []).map(String),
+        completed_materials: doc?.completed_materials || [],
         completed_assignments: (doc?.completed_assignments || []).map(String),
         completed_quizzes: (doc?.completed_quizzes || []).map(String),
         completed_at: doc?.completed_at || null,
@@ -1986,10 +1982,10 @@ export class CourseService {
     return { status: true, message: 'Lesson marked complete', data: { progress_percent: percent } };
   }
 
-  /** POST /auth/course/v1/progress/complete-sublesson */
-  async markSublessonComplete(
+  /** POST /auth/course/v1/progress/complete-material */
+  async markMaterialComplete(
     studentId: string,
-    sublessonId: string,
+    materialUrl: string,
     courseId: string,
     batchId: string,
   ) {
@@ -2000,13 +1996,13 @@ export class CourseService {
         batch_id: batchId,
       },
       {
-        $addToSet: { completed_sublessons: new Types.ObjectId(sublessonId) },
-        $setOnInsert: { completed_lessons: [], completed_assignments: [], completed_quizzes: [], progress_percent: 0, completed_at: null },
+        $addToSet: { completed_materials: materialUrl },
+        $setOnInsert: { completed_assignments: [], completed_quizzes: [], progress_percent: 0, completed_at: null },
       },
       { upsert: true, new: true },
     );
 
     const percent = await this.recomputeProgress(studentId, courseId, batchId);
-    return { status: true, message: 'Sub-lesson marked complete', data: { progress_percent: percent } };
+    return { status: true, message: 'Material marked complete', data: { progress_percent: percent } };
   }
 }

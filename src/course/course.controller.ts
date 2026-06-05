@@ -501,17 +501,17 @@ export class CourseController {
     );
   }
 
-  /** POST /auth/course/v1/progress/complete-sublesson */
+  /** POST /auth/course/v1/progress/complete-material */
   @UseGuards(JwtAuthGuard)
-  @Post('progress/complete-sublesson')
-  async markSublessonComplete(
-    @Body() dto: { sublesson_id: string; course_id: string; batch_id: string },
+  @Post('progress/complete-material')
+  async markMaterialComplete(
+    @Body() dto: { material_url: string; course_id: string; batch_id: string },
     @Req() req: AuthenticatedRequest,
   ) {
     const studentId = req.user.userId;
-    return this.courseService.markSublessonComplete(
+    return this.courseService.markMaterialComplete(
       studentId,
-      dto.sublesson_id,
+      dto.material_url,
       dto.course_id,
       dto.batch_id,
     );
