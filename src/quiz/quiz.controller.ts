@@ -54,8 +54,8 @@ export class QuizController {
 
   // GET /auth/quiz/v1/details/:id
   @Get('details/:id')
-  findById(@Param('id') id: string) {
-    return this.quizService.findById(id);
+  findById(@Param('id') id: string, @Req() req: AuthenticatedRequest) {
+    return this.quizService.findById(id, req.user?.role);
   }
 
   // GET /auth/quiz/v1/by-course/:courseId

@@ -16,6 +16,7 @@ import {
   UpdateAnnouncementDto,
 } from './dto/announcement.dto';
 import { JwtAuthGuard } from '../auth/jwt-auth.guard';
+import { InstructorOnlyGuard } from '../auth/instructor-only.guard';
 import type { AuthenticatedRequest } from '../common/interfaces/auth-request.interface';
 
 @UseGuards(JwtAuthGuard)
@@ -93,7 +94,8 @@ export class AnnouncementController {
     return this.announcementService.delete(id, instructorId);
   }
 
-  // POST /auth/announcement/v1/trigger-scheduler (Admin/Manual override, optional)
+  // POST /auth/announcement/v1/trigger-scheduler (instructor only)
+  @UseGuards(InstructorOnlyGuard)
   @Post('trigger-scheduler')
   triggerScheduler() {
     return this.announcementService.publishScheduledAnnouncements();

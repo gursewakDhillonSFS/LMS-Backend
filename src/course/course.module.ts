@@ -21,6 +21,7 @@ import { User, UserSchema } from '../user/schemas/user.schema';
 import { Category, CategorySchema } from '../category/schemas/category.schema';
 import { CloudinaryModule } from '../cloudinary/cloudinary.module';
 import { AuthModule } from '../auth/auth.module';
+import { CommunicationModule } from '../communication/communication.module';
 
 @Module({
   imports: [
@@ -41,6 +42,7 @@ import { AuthModule } from '../auth/auth.module';
     ]),
     CloudinaryModule,
     AuthModule,
+    CommunicationModule,
   ],
   controllers: [CourseController, ReviewController],
   providers: [CourseService],

@@ -157,6 +157,12 @@ export class CourseController {
   // LISTING & DETAILS
   // ─────────────────────────────────────────────────────────────────────────
 
+  @UseGuards(JwtAuthGuard)
+  @Get('dashboard/stats')
+  async getDashboardStats(@Req() req: AuthenticatedRequest) {
+    return this.courseService.getInstructorDashboardStats(req.user.userId);
+  }
+
   /**
    * GET /auth/course/v1/get-all-course
    * Query: page, size, search, category_id, status, course_type, course_schedule, live_classes

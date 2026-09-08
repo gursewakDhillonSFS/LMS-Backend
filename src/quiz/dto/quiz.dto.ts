@@ -178,4 +178,8 @@ export class GradeQuizSubmissionDto {
   @IsOptional()
   @IsString()
   feedback?: string;
+
+  @IsOptional()
+  @IsArray()
+  essayMarks?: { questionIndex: number; obtainedMarks: number }[];
 }

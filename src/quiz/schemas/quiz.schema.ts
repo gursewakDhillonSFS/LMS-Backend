@@ -65,3 +65,7 @@ export class Quiz {
 }
 
 export const QuizSchema = SchemaFactory.createForClass(Quiz);
+QuizSchema.index({ courseId: 1, batchId: 1 });
+QuizSchema.index({ dueDate: 1 });
+QuizSchema.index({ organisationId: 1 });
+

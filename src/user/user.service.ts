@@ -297,6 +297,10 @@ export class UserService {
     if (decoded.purpose !== 'reset')
       throw new BadRequestException('Invalid token');
 
+    if (!decoded.sub || String(decoded.sub) !== String(dto.user_id)) {
+      throw new BadRequestException('Token does not match the target user');
+    }
+
     const hashed = await bcrypt.hash(dto.new_password, 10);
     await this.userModel.findByIdAndUpdate(dto.user_id, {
       password: hashed,

@@ -11,6 +11,7 @@ import {
   UseInterceptors,
   UploadedFile,
   BadRequestException,
+  ForbiddenException,
 } from '@nestjs/common';
 import { FileInterceptor } from '@nestjs/platform-express';
 import { UserService } from './user.service';
@@ -31,6 +32,7 @@ import {
   OnboardingSubscriptionDto,
 } from './dto/onboarding.dto';
 import { JwtAuthGuard } from '../auth/jwt-auth.guard';
+import { InstructorOnlyGuard } from '../auth/instructor-only.guard';
 
 @Controller('auth/user/v1')
 export class UserController {
@@ -119,8 +121,12 @@ export class UserController {
     return this.userService.updateProfile(req.user.userId, dto, file);
   }
 
+  @UseGuards(JwtAuthGuard, InstructorOnlyGuard)
   @Get('seed/student-sandbox')
   async seedStudentSandbox() {
+    if (process.env.NODE_ENV === 'production') {
+      throw new ForbiddenException('Sandbox seeding is disabled in production');
+    }
     return this.userService.seedStudentSandbox();
   }
 }

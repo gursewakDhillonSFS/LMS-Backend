@@ -7,11 +7,16 @@ import { AllExceptionsFilter } from './common/filters/all-exceptions.filter';
 async function bootstrap() {
   const app = await NestFactory.create(AppModule, {
     logger: ['log', 'warn', 'error', 'debug', 'verbose'],
+    rawBody: true,
   });
 
-  // ─── CORS: allow localhost + any local network IP ─────────────────────────
+  // ─── CORS ───────────────────────────────────────────────────────────────────
+  // Dev: reflect request origin. Production: set CORS_ORIGINS=comma-separated list.
+  const corsOrigins = process.env.CORS_ORIGINS;
   app.enableCors({
-    origin: true, // reflects the request origin — safe for local dev
+    origin: corsOrigins
+      ? corsOrigins.split(',').map((o) => o.trim())
+      : true,
     credentials: true,
     methods: ['GET', 'POST', 'PUT', 'PATCH', 'DELETE', 'OPTIONS'],
   });

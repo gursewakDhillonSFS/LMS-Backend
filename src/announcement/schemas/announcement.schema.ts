@@ -31,3 +31,7 @@ export class Announcement {
 }
 
 export const AnnouncementSchema = SchemaFactory.createForClass(Announcement);
+AnnouncementSchema.index({ courseId: 1, status: 1 });
+AnnouncementSchema.index({ scheduledAt: 1, status: 1 });
+AnnouncementSchema.index({ instructorId: 1 });
+

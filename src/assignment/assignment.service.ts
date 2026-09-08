@@ -4,8 +4,8 @@ import {
   BadRequestException,
   ForbiddenException,
 } from '@nestjs/common';
-import { InjectModel } from '@nestjs/mongoose';
-import { Model, Types } from 'mongoose';
+import { InjectModel, InjectConnection } from '@nestjs/mongoose';
+import { Model, Types, Connection } from 'mongoose';
 import { Assignment, AssignmentDocument } from './schemas/assignment.schema';
 import {
   AssignmentSubmission,
@@ -37,6 +37,9 @@ export class AssignmentService {
 
     @InjectModel(Schedule.name)
     private scheduleModel: Model<ScheduleDocument>,
+
+    @InjectConnection()
+    private connection: Connection,
   ) {}
 
   // ─── Create Assignment ──────────────────────────────────────────────────────
@@ -216,7 +219,7 @@ export class AssignmentService {
     const assignment = await this.assignmentModel.findById(id);
     if (!assignment) throw new NotFoundException('Assignment not found');
 
-    // Allowed because teachers can perform CRUD on assignments within their assigned batches.
+    await this.assertCanManageAssignment(assignment, userId, role);
 
     const updated = await this.assignmentModel.findByIdAndUpdate(
       id,
@@ -259,7 +262,7 @@ export class AssignmentService {
     const assignment = await this.assignmentModel.findById(id);
     if (!assignment) throw new NotFoundException('Assignment not found');
 
-    // Allowed because teachers can perform CRUD on assignments within their assigned batches.
+    await this.assertCanManageAssignment(assignment, userId, role);
 
     await this.assignmentModel.findByIdAndDelete(id);
 
@@ -267,6 +270,55 @@ export class AssignmentService {
     await this.submissionModel.deleteMany({ assignmentId: assignment._id });
 
     return { status: true, message: 'Assignment deleted successfully' };
+  }
+
+  private async assertCanManageAssignment(
+    assignment: AssignmentDocument,
+    userId?: string,
+    role?: string,
+  ) {
+    if (!userId) return;
+    if (role === 'instructor') {
+      if (
+        assignment.created_by &&
+        String(assignment.created_by) !== String(userId)
+      ) {
+        const user = await this.userModel.findById(userId).lean();
+        if (
+          user?.organisationId &&
+          assignment.organisationId &&
+          String(user.organisationId) === String(assignment.organisationId)
+        ) {
+          return;
+        }
+        // allow same org or creator; if neither matches, still allow instructor of org course
+        const course = await this.courseModel.findById(assignment.courseId).lean();
+        if (
+          course?.organisation_id &&
+          user?.organisationId &&
+          String(course.organisation_id) === String(user.organisationId)
+        ) {
+          return;
+        }
+        throw new ForbiddenException('Not authorized to manage this assignment');
+      }
+      return;
+    }
+    if (role === 'teacher') {
+      const callingUser = await this.userModel.findById(userId).lean();
+      const course = await this.courseModel.findById(assignment.courseId);
+      if (!course || !callingUser?.teacherId) {
+        throw new ForbiddenException('Teacher not assigned to this batch');
+      }
+      const batch = (
+        course.batch as { _id?: Types.ObjectId; teacher?: string }[]
+      ).find((b) => b._id?.toString() === assignment.batchId);
+      if (!batch || String(batch.teacher) !== String(callingUser.teacherId)) {
+        throw new ForbiddenException('Teacher not assigned to this batch');
+      }
+      return;
+    }
+    throw new ForbiddenException('Not authorized to manage this assignment');
   }
 
   // ─── Get Submissions (Instructor View) ──────────────────────────────────────
@@ -446,12 +498,35 @@ export class AssignmentService {
       {
         $set: {
           submittedText,
-          status: 'Pending',
+          status: 'Submitted',
           dateOfSubmit: new Date(),
         },
       },
       { upsert: true, new: true },
     );
+
+    // Update progress
+    try {
+      await this.connection.collection('course_progress').updateOne(
+        {
+          student_id: new Types.ObjectId(studentId),
+          course_id: assignment.courseId,
+          batch_id: assignment.batchId,
+        },
+        {
+          $addToSet: { completed_assignments: assignment._id },
+          $setOnInsert: {
+            completed_materials: [],
+            completed_quizzes: [],
+            progress_percent: 0,
+            completed_at: null,
+          },
+        },
+        { upsert: true },
+      );
+    } catch {
+      // progress update is best-effort
+    }
 
     return {
       status: true,

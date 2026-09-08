@@ -13,6 +13,10 @@ import { QuizModule } from './quiz/quiz.module';
 import { AnnouncementModule } from './announcement/announcement.module';
 import { ScheduleModule } from '@nestjs/schedule';
 import { ScheduleModule as LmsScheduleModule } from './schedule/schedule.module';
+import { PaymentModule } from './payment/payment.module';
+import { CommunicationModule } from './communication/communication.module';
+import { CertificateModule } from './certificate/certificate.module';
+import { AdminModule } from './admin/admin.module';
 
 @Module({
   imports: [
@@ -36,6 +40,10 @@ import { ScheduleModule as LmsScheduleModule } from './schedule/schedule.module'
     QuizModule,
     AnnouncementModule,
     LmsScheduleModule,
+    PaymentModule,
+    CommunicationModule,
+    CertificateModule,
+    AdminModule,
   ],
 })
 export class AppModule {

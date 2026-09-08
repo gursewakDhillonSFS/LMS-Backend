@@ -4,8 +4,8 @@ import {
   BadRequestException,
   ForbiddenException,
 } from '@nestjs/common';
-import { InjectModel } from '@nestjs/mongoose';
-import { Model, Types } from 'mongoose';
+import { InjectModel, InjectConnection } from '@nestjs/mongoose';
+import { Model, Types, Connection } from 'mongoose';
 import { Quiz, QuizDocument } from './schemas/quiz.schema';
 import {
   QuizSubmission,
@@ -37,6 +37,9 @@ export class QuizService {
 
     @InjectModel(User.name)
     private userModel: Model<UserDocument>,
+
+    @InjectConnection()
+    private connection: Connection,
   ) {}
 
   // ─── Create Quiz ─────────────────────────────────────────────────────────────
@@ -94,7 +97,7 @@ export class QuizService {
     return {
       status: true,
       message: 'Quiz created successfully',
-      data: this.formatQuiz(quiz),
+      data: this.formatQuiz(quiz, true),
     };
   }
 
@@ -162,7 +165,7 @@ export class QuizService {
           }
         }
 
-        return { ...this.formatQuiz(q), submittedCount, totalMarks, studentSubmission };
+        return { ...this.formatQuiz(q, false), submittedCount, totalMarks, studentSubmission };
       }),
     );
 
@@ -178,7 +181,7 @@ export class QuizService {
   }
 
   // ─── Get Quiz Details ─────────────────────────────────────────────────────────
-  async findById(id: string) {
+  async findById(id: string, role?: string) {
     const quiz = await this.quizModel.findById(id);
     if (!quiz) throw new NotFoundException('Quiz not found');
 
@@ -202,10 +205,12 @@ export class QuizService {
       0,
     );
 
+    const includeAnswers = role === 'instructor' || role === 'teacher';
+
     return {
       status: true,
       data: {
-        ...this.formatQuiz(quiz),
+        ...this.formatQuiz(quiz, includeAnswers),
         submittedCount,
         totalMarks,
         courseName: course?.course_name || null,
@@ -256,7 +261,7 @@ export class QuizService {
     return {
       status: true,
       message: 'Quiz updated successfully',
-      data: this.formatQuiz(updated),
+      data: this.formatQuiz(updated, true),
     };
   }
 
@@ -360,14 +365,42 @@ export class QuizService {
     };
   }
 
-  // ─── Grade Submission (Essay manual feedback) ─────────────────────────────────
+  // ─── Grade Submission (Essay manual feedback + marks) ─────────────────────────────────
   async gradeSubmission(dto: GradeQuizSubmissionDto) {
     const submission = await this.submissionModel.findById(dto.submissionId);
     if (!submission) throw new NotFoundException('Submission not found');
 
+    const quiz = await this.quizModel.findById(submission.quizId);
+    if (!quiz) throw new NotFoundException('Quiz not found');
+
+    const answers = [...(submission.answers || [])];
+    if (dto.essayMarks?.length) {
+      for (const mark of dto.essayMarks) {
+        const idx = answers.findIndex(
+          (a) => a.questionIndex === mark.questionIndex,
+        );
+        if (idx === -1) continue;
+        const question = quiz.questions[mark.questionIndex];
+        const maxMarks = question?.marks || 0;
+        const obtained = Math.max(0, Math.min(mark.obtainedMarks, maxMarks));
+        answers[idx] = {
+          ...answers[idx],
+          obtainedMarks: obtained,
+          isCorrect: obtained > 0,
+        };
+      }
+    }
+
+    const obtainedScore = answers.reduce(
+      (sum, a) => sum + (a.obtainedMarks || 0),
+      0,
+    );
+
     const updated = await this.submissionModel.findByIdAndUpdate(
       dto.submissionId,
       {
+        answers,
+        obtainedScore,
         ...(dto.feedback !== undefined && { feedback: dto.feedback }),
         status: 'Graded',
       },
@@ -473,6 +506,29 @@ export class QuizService {
       { upsert: true, new: true },
     );
 
+    // Update course progress
+    try {
+      await this.connection.collection('course_progress').updateOne(
+        {
+          student_id: new Types.ObjectId(studentId),
+          course_id: quiz.courseId,
+          batch_id: quiz.batchId,
+        },
+        {
+          $addToSet: { completed_quizzes: quiz._id },
+          $setOnInsert: {
+            completed_materials: [],
+            completed_assignments: [],
+            progress_percent: 0,
+            completed_at: null,
+          },
+        },
+        { upsert: true },
+      );
+    } catch {
+      // best-effort
+    }
+
     return {
       status: true,
       message: 'Quiz submitted successfully',
@@ -486,7 +542,7 @@ export class QuizService {
   }
 
   // ─── Formatter ────────────────────────────────────────────────────────────────
-  private formatQuiz(q: QuizDocument) {
+  private formatQuiz(q: QuizDocument, includeAnswers = false) {
     return {
       quiz_id: String(q._id),
       quizName: q.quizName,
@@ -501,15 +557,17 @@ export class QuizService {
       courseId: String(q.courseId),
       batchId: q.batchId,
       created_by: q.created_by ? String(q.created_by) : null,
-      // Return questions WITHOUT correctOption/correctAnswer (don't expose answers to listing)
       questions: (q.questions || []).map((qu) => ({
         questionType: qu.questionType,
         question: qu.question,
         marks: qu.marks,
         options: qu.options || [],
-        // Only expose correct answers to instructor (details endpoint)
-        correctOption: qu.correctOption,
-        correctAnswer: qu.correctAnswer,
+        ...(includeAnswers
+          ? {
+              correctOption: qu.correctOption,
+              correctAnswer: qu.correctAnswer,
+            }
+          : {}),
       })),
       status: q.status,
       createdAt: (q as unknown as { createdAt?: Date }).createdAt,

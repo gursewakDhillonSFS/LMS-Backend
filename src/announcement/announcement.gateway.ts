@@ -7,14 +7,27 @@ import {
   OnGatewayInit,
   OnGatewayConnection,
   OnGatewayDisconnect,
+  WsException,
 } from '@nestjs/websockets';
 import { Logger } from '@nestjs/common';
+import { JwtService } from '@nestjs/jwt';
+import { InjectModel } from '@nestjs/mongoose';
+import { InjectConnection } from '@nestjs/mongoose';
+import { Model, Connection, Types } from 'mongoose';
 import { Server, Socket } from 'socket.io';
+import { User, UserDocument } from '../user/schemas/user.schema';
+import { Course, CourseDocument } from '../course/schemas/course.schema';
 
 interface AnnouncementBroadcast {
   batchId?: string | null;
   courseId: string;
   [key: string]: unknown;
+}
+
+interface SocketUser {
+  userId: string;
+  email: string;
+  role: string;
 }
 
 @WebSocketGateway({
@@ -29,12 +42,49 @@ export class AnnouncementGateway
   @WebSocketServer() server: Server;
   private readonly logger = new Logger('AnnouncementGateway');
 
-  afterInit(server: Server) {
+  constructor(
+    private readonly jwtService: JwtService,
+    @InjectModel(User.name) private userModel: Model<UserDocument>,
+    @InjectModel(Course.name) private courseModel: Model<CourseDocument>,
+    @InjectConnection() private connection: Connection,
+  ) {}
+
+  afterInit() {
     this.logger.log('WebSocket Gateway Initialized for Announcements');
   }
 
-  handleConnection(client: Socket, ...args: unknown[]) {
-    this.logger.log(`Client connected: ${client.id}`);
+  async handleConnection(client: Socket) {
+    try {
+      const token =
+        (client.handshake.auth?.token as string) ||
+        (client.handshake.headers?.authorization as string)?.replace(
+          /^Bearer\s+/i,
+          '',
+        );
+
+      if (!token) {
+        this.logger.warn(`Client ${client.id} rejected: missing token`);
+        client.disconnect(true);
+        return;
+      }
+
+      const payload = this.jwtService.verify<{
+        sub: string;
+        email: string;
+        role: string;
+      }>(token);
+
+      client.data.user = {
+        userId: payload.sub,
+        email: payload.email,
+        role: payload.role,
+      } as SocketUser;
+
+      this.logger.log(`Client connected: ${client.id} (${payload.email})`);
+    } catch (err) {
+      this.logger.warn(`Client ${client.id} rejected: invalid token`);
+      client.disconnect(true);
+    }
   }
 
   handleDisconnect(client: Socket) {
@@ -42,37 +92,140 @@ export class AnnouncementGateway
   }
 
   @SubscribeMessage('join')
-  handleJoin(
+  async handleJoin(
     @ConnectedSocket() client: Socket,
     @MessageBody() data: { courseIds?: string[]; batchIds?: string[] },
   ) {
-    this.logger.log(
-      `Client ${client.id} joining rooms: ${JSON.stringify(data)}`,
-    );
+    const user = client.data.user as SocketUser | undefined;
+    if (!user?.userId) {
+      throw new WsException('Unauthorized');
+    }
+
+    const allowedCourseIds = await this.resolveAllowedCourseIds(user);
+    const allowedBatchIds = await this.resolveAllowedBatchIds(user);
+
+    const joined: string[] = [];
+
     if (data?.courseIds && Array.isArray(data.courseIds)) {
-      data.courseIds.forEach((courseId) => {
-        if (courseId) {
-          client.join(`course_${courseId}`);
-          this.logger.log(
-            `Client ${client.id} joined room: course_${courseId}`,
+      for (const courseId of data.courseIds) {
+        if (!courseId) continue;
+        if (!allowedCourseIds.has(String(courseId))) {
+          this.logger.warn(
+            `User ${user.userId} denied join course_${courseId}`,
           );
+          continue;
         }
-      });
+        client.join(`course_${courseId}`);
+        joined.push(`course_${courseId}`);
+      }
     }
 
     if (data?.batchIds && Array.isArray(data.batchIds)) {
-      data.batchIds.forEach((batchId) => {
-        if (batchId) {
-          client.join(`batch_${batchId}`);
-          this.logger.log(`Client ${client.id} joined room: batch_${batchId}`);
+      for (const batchId of data.batchIds) {
+        if (!batchId) continue;
+        if (!allowedBatchIds.has(String(batchId))) {
+          this.logger.warn(`User ${user.userId} denied join batch_${batchId}`);
+          continue;
         }
-      });
+        client.join(`batch_${batchId}`);
+        joined.push(`batch_${batchId}`);
+      }
     }
 
-    return { event: 'join', status: 'success' };
+    return { event: 'join', status: 'success', rooms: joined };
   }
 
-  // Helper method to broadcast a new announcement to targeted audience
+  private async resolveAllowedCourseIds(user: SocketUser): Promise<Set<string>> {
+    const allowed = new Set<string>();
+    const dbUser = await this.userModel.findById(user.userId).lean();
+    if (!dbUser) return allowed;
+
+    if (user.role === 'instructor' || user.role === 'teacher') {
+      const filter: Record<string, unknown> = {};
+      if (dbUser.organisationId) {
+        filter.organisation_id = dbUser.organisationId;
+      }
+      if (user.role === 'teacher' && dbUser.teacherId) {
+        filter.$or = [
+          { head_teacher: dbUser.teacherId },
+          { 'batch.teacher': String(dbUser.teacherId) },
+        ];
+      } else if (user.role === 'instructor' && dbUser._id) {
+        filter.$or = [
+          { created_by: dbUser._id },
+          { organisation_id: dbUser.organisationId },
+        ];
+      }
+      const courses = await this.courseModel.find(filter).select('_id').lean();
+      courses.forEach((c) => allowed.add(String(c._id)));
+      return allowed;
+    }
+
+    // Student: enrolled courses only
+    const enrollments = await this.connection
+      .collection('batch_enrolled_students')
+      .find({ student_id: new Types.ObjectId(user.userId) })
+      .toArray();
+    enrollments.forEach((e) => {
+      if (e.course_id) allowed.add(String(e.course_id));
+    });
+    return allowed;
+  }
+
+  private async resolveAllowedBatchIds(user: SocketUser): Promise<Set<string>> {
+    const allowed = new Set<string>();
+    const dbUser = await this.userModel.findById(user.userId).lean();
+    if (!dbUser) return allowed;
+
+    if (user.role === 'instructor') {
+      const courses = await this.courseModel
+        .find({
+          $or: [
+            { created_by: dbUser._id },
+            ...(dbUser.organisationId
+              ? [{ organisation_id: dbUser.organisationId }]
+              : []),
+          ],
+        })
+        .select('batch')
+        .lean();
+      courses.forEach((c) => {
+        (c.batch || []).forEach((b: { _id?: Types.ObjectId }) => {
+          if (b._id) allowed.add(String(b._id));
+        });
+      });
+      return allowed;
+    }
+
+    if (user.role === 'teacher' && dbUser.teacherId) {
+      const courses = await this.courseModel
+        .find({ organisation_id: dbUser.organisationId })
+        .select('batch')
+        .lean();
+      courses.forEach((c) => {
+        (c.batch || []).forEach(
+          (b: { _id?: Types.ObjectId; teacher?: string | null }) => {
+            if (b._id && String(b.teacher) === String(dbUser.teacherId)) {
+              allowed.add(String(b._id));
+            }
+          },
+        );
+      });
+      return allowed;
+    }
+
+    // Student: enrolled batches + user.batchIds
+    const enrollments = await this.connection
+      .collection('batch_enrolled_students')
+      .find({ student_id: new Types.ObjectId(user.userId) })
+      .toArray();
+    enrollments.forEach((e) => {
+      if (e.batch_id) allowed.add(String(e.batch_id));
+    });
+    (dbUser.batchIds || []).forEach((id) => allowed.add(String(id)));
+    return allowed;
+  }
+
   broadcastNewAnnouncement(announcement: AnnouncementBroadcast) {
     const payload = {
       event: 'announcement:new',
@@ -80,14 +233,12 @@ export class AnnouncementGateway
     };
 
     if (announcement.batchId) {
-      // Emit to targeted batch only
       const targetRoom = `batch_${announcement.batchId}`;
       this.logger.log(
         `Broadcasting new announcement to batch room: ${targetRoom}`,
       );
       this.server.to(targetRoom).emit('announcement:new', payload);
     } else {
-      // Emit to whole course
       const targetRoom = `course_${announcement.courseId}`;
       this.logger.log(
         `Broadcasting new announcement to course room: ${targetRoom}`,
@@ -96,7 +247,6 @@ export class AnnouncementGateway
     }
   }
 
-  // Helper method to broadcast hard deletion
   broadcastDeletedAnnouncement(
     announcementId: string,
     courseId: string,

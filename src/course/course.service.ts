@@ -22,6 +22,7 @@ import {
   CourseProgress,
   CourseProgressDocument,
 } from './schemas/course-progress.schema';
+import { CommunicationService } from '../communication/communication.service';
 import {
   CreateStep1Dto,
   CreateStep2Dto,
@@ -57,6 +58,7 @@ export class CourseService {
     private progressModel: Model<CourseProgressDocument>,
     private readonly cloudinary: CloudinaryService,
     @InjectConnection() private readonly connection: Connection,
+    private readonly communicationService: CommunicationService,
   ) {}
 
   // ─── Helper: build flat course response ───────────────────────────────────
@@ -682,6 +684,58 @@ export class CourseService {
     return { status: true, data: detail };
   }
 
+  async getInstructorDashboardStats(userId: string) {
+    const user = await this.userModel.findById(userId).lean();
+    if (!user) throw new NotFoundException('User not found');
+
+    const courseFilter: Record<string, unknown> = {};
+    if (user.role === 'instructor') {
+      courseFilter.$or = [
+        { created_by: new Types.ObjectId(userId) },
+        ...(user.organisationId
+          ? [{ organisation_id: user.organisationId }]
+          : []),
+      ];
+    } else if (user.role === 'teacher' && user.teacherId) {
+      courseFilter.$or = [
+        { head_teacher: user.teacherId },
+        { 'batch.teacher': String(user.teacherId) },
+      ];
+    }
+
+    const courses = await this.courseModel.find(courseFilter).select('_id batch').lean();
+    const courseIds = courses.map((c) => c._id);
+    const batchIds = courses.flatMap((c) =>
+      (c.batch || []).map((b: { _id?: Types.ObjectId }) => b._id).filter(Boolean),
+    );
+
+    const [studentCount, pendingAssignments] = await Promise.all([
+      this.connection.collection('batch_enrolled_students').countDocuments({
+        course_id: { $in: courseIds },
+      }),
+      this.connection.collection('assignment_submissions').countDocuments({
+        status: 'Submitted',
+      }),
+    ]);
+
+    const upcomingLive = await this.connection.collection('schedules').countDocuments({
+      courseId: { $in: courseIds },
+      date: { $gte: new Date() },
+      meetingLink: { $ne: '' },
+    });
+
+    return {
+      status: true,
+      data: {
+        courseCount: courses.length,
+        studentCount,
+        upcomingLiveClasses: upcomingLive,
+        pendingAssignmentsToGrade: pendingAssignments,
+        batchCount: batchIds.length,
+      },
+    };
+  }
+
   async searchCourses(q: string) {
     const courses = await this.courseModel
       .find({
@@ -943,6 +997,39 @@ export class CourseService {
     };
     course.batch.push(newBatch);
     await course.save();
+
+    // Sync standalone batches collection
+    await this.connection.collection('batches').updateOne(
+      { _id: newBatch._id },
+      {
+        $set: {
+          name: dto.batchName,
+          batchName: dto.batchName,
+          course_id: new Types.ObjectId(dto.course_id),
+          teacher_id: dto.teacher ? new Types.ObjectId(dto.teacher) : null,
+          organisation_id: course.organisation_id || null,
+          chat_group_id: null,
+          updatedAt: new Date(),
+        },
+        $setOnInsert: { createdAt: new Date() },
+      },
+      { upsert: true },
+    );
+
+    // Auto-create chat group for batch
+    const chatGroup = await this.communicationService.ensureGroupForBatch(
+      dto.course_id,
+      String(newBatch._id),
+      `${course.course_name || 'Course'} — ${dto.batchName}`,
+      course.created_by ? [String(course.created_by)] : [],
+    );
+    if (chatGroup) {
+      await this.connection.collection('batches').updateOne(
+        { _id: newBatch._id },
+        { $set: { chat_group_id: chatGroup._id } },
+      );
+    }
+
     return {
       status: true,
       message: 'Batch created successfully',
@@ -967,6 +1054,21 @@ export class CourseService {
     course.markModified('batch');
     await course.save();
 
+    await this.connection.collection('batches').updateOne(
+      { _id: new Types.ObjectId(dto.batch_id) },
+      {
+        $set: {
+          name: dto.batchName,
+          batchName: dto.batchName,
+          teacher_id: dto.teacher ? new Types.ObjectId(dto.teacher) : null,
+          organisation_id: course.organisation_id || null,
+          course_id: new Types.ObjectId(dto.course_id),
+          updatedAt: new Date(),
+        },
+      },
+      { upsert: true },
+    );
+
     return {
       status: true,
       message: 'Batch updated successfully',
@@ -979,13 +1081,35 @@ export class CourseService {
     course.batch = course.batch.filter((b) => b._id?.toString() !== batchId);
     course.markModified('batch');
     await course.save();
+
+    await this.connection
+      .collection('batches')
+      .deleteOne({ _id: new Types.ObjectId(batchId) });
+
     return { status: true, message: 'Batch deleted successfully' };
   }
 
   // ─── Guard helper ─────────────────────────────────────────────────────────
-  private async guardCourse(courseId: string): Promise<CourseDocument> {
+  private async guardCourse(
+    courseId: string,
+    userId?: string,
+  ): Promise<CourseDocument> {
     const course = await this.courseModel.findById(courseId);
     if (!course) throw new NotFoundException('Course not found');
+    if (userId) {
+      const user = await this.userModel.findById(userId).lean();
+      if (
+        user &&
+        String(user.role) === 'instructor' &&
+        course.created_by &&
+        String(course.created_by) !== String(userId) &&
+        course.organisation_id &&
+        user.organisationId &&
+        String(course.organisation_id) !== String(user.organisationId)
+      ) {
+        throw new ForbiddenException('Not authorized for this course');
+      }
+    }
     return course;
   }
 
@@ -1766,6 +1890,19 @@ export class CourseService {
         await this.userModel.findByIdAndUpdate(userId, {
           $addToSet: { batchIds: batch._id },
         });
+
+        // Add student to batch chat group
+        try {
+          await this.communicationService.ensureGroupForBatch(
+            cid,
+            String(batch._id),
+            `${course.course_name || 'Course'} — ${batch.name}`,
+            [userId],
+          );
+          await this.communicationService.addMember(String(batch._id), userId);
+        } catch (err) {
+          this.logger.warn(`Chat membership failed for batch ${batch._id}`);
+        }
       }
 
       // Clear from cart
@@ -1840,7 +1977,25 @@ export class CourseService {
     if (!Types.ObjectId.isValid(courseId)) {
       throw new BadRequestException('Invalid courseId format');
     }
-    
+
+    const enrolled = await this.connection
+      .collection('batch_enrolled_students')
+      .findOne({
+        student_id: new Types.ObjectId(userId),
+        course_id: new Types.ObjectId(courseId),
+      });
+    if (!enrolled) {
+      throw new ForbiddenException('Only enrolled students can review this course');
+    }
+
+    const user = await this.userModel.findById(userId).lean();
+    const resolvedName =
+      userName && userName !== 'Student'
+        ? userName
+        : user
+          ? `${user.firstName || ''} ${user.lastName || ''}`.trim() || 'Student'
+          : 'Student';
+
     // Check if user already reviewed
     const existing = await this.reviewModel.findOne({ 
       user_id: new Types.ObjectId(userId), 
@@ -1856,8 +2011,26 @@ export class CourseService {
       course_id: new Types.ObjectId(courseId),
       rating,
       review: reviewText,
-      user_name: userName,
+      user_name: resolvedName,
     });
+
+    const stats = await this.reviewModel.aggregate([
+      { $match: { course_id: new Types.ObjectId(courseId) } },
+      {
+        $group: {
+          _id: '$course_id',
+          average_rating: { $avg: '$rating' },
+          review_count: { $sum: 1 },
+        },
+      },
+    ]);
+
+    if (stats[0]) {
+      await this.courseModel.findByIdAndUpdate(courseId, {
+        average_rating: Math.round(stats[0].average_rating * 10) / 10,
+        review_count: stats[0].review_count,
+      });
+    }
 
     return { status: true, message: 'Review created successfully', data: review };
   }

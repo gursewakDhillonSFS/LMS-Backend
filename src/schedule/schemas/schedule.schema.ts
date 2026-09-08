@@ -37,3 +37,6 @@ export class Schedule {
 }
 
 export const ScheduleSchema = SchemaFactory.createForClass(Schedule);
+ScheduleSchema.index({ courseId: 1, batchId: 1, date: 1 });
+ScheduleSchema.index({ organisationId: 1, date: 1 });
+

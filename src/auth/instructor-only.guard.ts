@@ -10,9 +10,9 @@ export class InstructorOnlyGuard implements CanActivate {
   canActivate(context: ExecutionContext): boolean {
     const request = context.switchToHttp().getRequest();
     const user = request.user;
-    if (!user || user.role === 'teacher') {
+    if (!user || user.role !== 'instructor') {
       throw new ForbiddenException(
-        'Teachers are not authorized to modify course resources',
+        'Only instructors are authorized to modify course resources',
       );
     }
     return true;
