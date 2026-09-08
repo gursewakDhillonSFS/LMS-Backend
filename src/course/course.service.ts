@@ -557,8 +557,19 @@ export class CourseService {
       });
     }
 
-    // ─── Smart Teacher Data Isolation ─────────────────────────────────────
+    // ─── Smart Data Isolation for Instructors & Teachers ─────────────────
     const callingUser = userId ? await this.userModel.findById(userId).lean() : null;
+    if (
+      callingUser &&
+      String(callingUser.role) === 'instructor' &&
+      callingUser.organisationId &&
+      !query.organisation_id
+    ) {
+      andFilters.push({
+        organisation_id: new Types.ObjectId(String(callingUser.organisationId)),
+      });
+    }
+
     if (
       callingUser &&
       String(callingUser.role) === 'teacher' &&

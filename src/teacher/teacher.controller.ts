@@ -37,6 +37,7 @@ export class TeacherController {
   // GET /auth/course/v1/get-all-Instructor
   @Get('get-all-Instructor')
   findAll(
+    @Req() req: any,
     @Query('page') page?: string,
     @Query('limit') limit?: string,
     @Query('organisationId') organisationId?: string,
@@ -47,6 +48,7 @@ export class TeacherController {
       limit ? parseInt(limit) : 10,
       organisationId,
       search,
+      req.user?.userId,
     );
   }
 

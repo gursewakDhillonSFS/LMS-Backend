@@ -273,12 +273,21 @@ export class TeacherService {
     limit = 10,
     organisationId?: string,
     search?: string,
+    userId?: string,
   ) {
     const skip = (page - 1) * limit;
-    const filter: {
-      organisationId?: string;
-      $or?: { firstName?: RegExp; lastName?: RegExp; email?: RegExp }[];
-    } = organisationId ? { organisationId } : {};
+    let targetOrgId = organisationId;
+
+    if (userId) {
+      const callingUser = await this.userModel.findById(userId).lean();
+      if (callingUser && callingUser.role !== 'admin' && callingUser.organisationId) {
+        targetOrgId = String(callingUser.organisationId);
+      }
+    }
+
+    const filter: Record<string, unknown> = targetOrgId
+      ? { organisationId: new Types.ObjectId(String(targetOrgId)) }
+      : {};
 
     if (search) {
       const regex = new RegExp(search, 'i');
