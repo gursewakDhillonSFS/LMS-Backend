@@ -11,6 +11,7 @@ dist/
 **/dist/
 build/
 **/build/
+*.tsbuildinfo
 
 # Environment files
 # .env
