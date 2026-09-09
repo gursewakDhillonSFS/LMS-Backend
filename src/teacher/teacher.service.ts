@@ -65,7 +65,8 @@ export class TeacherService {
       creatorUser = await this.userModel.findById(dto.user_id);
       if (
         creatorUser &&
-        creatorUser.email.toLowerCase() === dto.email.toLowerCase()
+        (creatorUser.email.toLowerCase() === dto.email.toLowerCase() ||
+          creatorUser.onboardingStatus === OnboardingStatus.PENDING)
       ) {
         isSelfOnboarding = true;
       }
@@ -97,6 +98,7 @@ export class TeacherService {
 
     // 5. Manage the related User account
     let targetUserId: string | null = null;
+    let setupLink: string | null = null;
 
     if (isSelfOnboarding && creatorUser) {
       // Link existing user during onboarding
@@ -126,38 +128,33 @@ export class TeacherService {
       })) as UserDocument;
       targetUserId = String(newUser._id);
 
-      if (creatorUser && creatorUser.role === UserRole.INSTRUCTOR && creatorUser.onboardingStatus === OnboardingStatus.PENDING) {
-        creatorUser.teacherId = teacher._id;
-        creatorUser.onboardingStatus = OnboardingStatus.COMPLETE;
-        await creatorUser.save();
-      }
+      // Generate password setup JWT token (valid for 48 hours)
+      const setupToken = this.jwtService.sign(
+        { sub: newUser._id, purpose: 'reset' },
+        { expiresIn: '48h' },
+      );
 
-      // 6. Deliver Brevo invitation email
+      const frontendUrl =
+        this.configService.get('FRONTEND_URL') || 'http://localhost:3000';
+      setupLink = `${frontendUrl}/setup-password?token=${setupToken}&userId=${newUser._id}`;
+
+      this.logger.log(
+        `\n=======================================================\n🔑 TEACHER INVITATION ACTIVATION LINK:\n${setupLink}\n=======================================================\n`,
+      );
+
+      // 6. Deliver invitation email via Brevo or Nodemailer
       try {
-        // Fetch organization name
         let orgName = 'LMS Platform';
         if (finalOrganisationId) {
           const org = await this.orgModel.findById(finalOrganisationId);
           if (org) orgName = org.name;
         }
 
-        // Generate password setup JWT token (valid for 48 hours)
-        const setupToken = this.jwtService.sign(
-          { sub: newUser._id, purpose: 'reset' },
-          { expiresIn: '48h' },
-        );
-
-        const frontendUrl =
-          this.configService.get('FRONTEND_URL') || 'http://localhost:3000';
-        const setupLink = `${frontendUrl}/setup-password?token=${setupToken}&userId=${newUser._id}`;
-
-        // Load and compile template
         const templatePath = path.join(
           __dirname,
           'templates',
           'invite-teacher.ejs',
         );
-        // Fallback template path for production built dist structure if nested differently
         const resolvedTemplatePath = fs.existsSync(templatePath)
           ? templatePath
           : path.join(
@@ -176,57 +173,82 @@ export class TeacherService {
             setupLink,
           });
 
-          // Dispatch via Brevo
           const apiKey = this.configService.get('BREVO_API_KEY');
           const senderEmail = this.configService.get('BREVO_SENDER_EMAIL');
           const senderName = this.configService.get('BREVO_SENDER_NAME');
 
-          if (apiKey) {
-            const response = await fetch(
-              'https://api.brevo.com/v3/smtp/email',
-              {
-                method: 'POST',
-                headers: {
-                  Accept: 'application/json',
-                  'Content-Type': 'application/json',
-                  'api-key': apiKey,
-                },
-                body: JSON.stringify({
-                  sender: {
-                    name: senderName || 'LMS Platform',
-                    email: senderEmail || 'info@lms.com',
-                  },
-                  to: [
-                    {
-                      email: teacher.email,
-                      name: `${teacher.firstName} ${teacher.lastName}`,
-                    },
-                  ],
-                  subject: `Welcome to Learning+ - Action Required to Set Up Your Account`,
-                  htmlContent: renderedHtml,
-                }),
-              },
-            );
+          let emailDelivered = false;
 
-            if (response.ok) {
-              this.logger.log(
-                `Invitation email successfully dispatched to ${teacher.email}`,
+          if (apiKey) {
+            try {
+              const response = await fetch(
+                'https://api.brevo.com/v3/smtp/email',
+                {
+                  method: 'POST',
+                  headers: {
+                    Accept: 'application/json',
+                    'Content-Type': 'application/json',
+                    'api-key': apiKey,
+                  },
+                  body: JSON.stringify({
+                    sender: {
+                      name: senderName || 'LMS Platform',
+                      email: senderEmail || 'info@lms.com',
+                    },
+                    to: [
+                      {
+                        email: teacher.email,
+                        name: `${teacher.firstName} ${teacher.lastName}`,
+                      },
+                    ],
+                    subject: `Welcome to Learning+ - Action Required to Set Up Your Account`,
+                    htmlContent: renderedHtml,
+                  }),
+                },
               );
-            } else {
-              const errorBody = await response.text();
-              this.logger.error(
-                `Failed to dispatch email via Brevo: ${errorBody}`,
-              );
+
+              if (response.ok) {
+                this.logger.log(
+                  `Invitation email successfully dispatched to ${teacher.email} via Brevo`,
+                );
+                emailDelivered = true;
+              } else {
+                const errorBody = await response.text();
+                this.logger.warn(
+                  `Brevo email dispatch failed (status ${response.status}): ${errorBody}`,
+                );
+              }
+            } catch (brevoErr) {
+              this.logger.warn(`Brevo network dispatch error: ${brevoErr.message}`);
             }
-          } else {
-            this.logger.warn(
-              'BREVO_API_KEY is not configured. Bypassing email delivery.',
-            );
           }
-        } else {
-          this.logger.error(
-            `EJS template could not be resolved at path: ${resolvedTemplatePath}`,
-          );
+
+          // Fallback to Nodemailer if Brevo didn't succeed and SMTP is configured
+          if (!emailDelivered) {
+            const emailUser = this.configService.get('EMAIL_USER');
+            const emailPass = this.configService.get('EMAIL_PASS');
+            if (emailUser && emailPass && !emailUser.includes('your-email')) {
+              try {
+                const nodemailer = await import('nodemailer');
+                const transporter = nodemailer.createTransport({
+                  service: 'gmail',
+                  auth: { user: emailUser, pass: emailPass },
+                });
+                await transporter.sendMail({
+                  from: `"${senderName || 'LMS Platform'}" <${emailUser}>`,
+                  to: teacher.email,
+                  subject: `Welcome to Learning+ - Action Required to Set Up Your Account`,
+                  html: renderedHtml,
+                });
+                this.logger.log(
+                  `Invitation email successfully dispatched to ${teacher.email} via Nodemailer`,
+                );
+                emailDelivered = true;
+              } catch (nmErr) {
+                this.logger.warn(`Nodemailer fallback failed: ${nmErr.message}`);
+              }
+            }
+          }
         }
       } catch (mailError) {
         this.logger.error(
@@ -241,8 +263,9 @@ export class TeacherService {
       status: true,
       message: isSelfOnboarding
         ? 'Teacher profile created successfully'
-        : 'Teacher invited and user credentials successfully initiated',
-      teacher,
+        : 'Teacher invited successfully. Activation link generated.',
+      teacher: this.formatTeacherForFrontend(teacher),
+      setupLink: setupLink || undefined,
     };
   }
 
