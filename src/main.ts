@@ -4,6 +4,10 @@ import { AppModule } from './app.module';
 import { ValidationPipe, Logger } from '@nestjs/common';
 import { AllExceptionsFilter } from './common/filters/all-exceptions.filter';
 
+if (!process.env.NODE_ENV || process.env.NODE_ENV === 'development') {
+  process.env.NODE_TLS_REJECT_UNAUTHORIZED = '0';
+}
+
 async function bootstrap() {
   const app = await NestFactory.create(AppModule, {
     logger: ['log', 'warn', 'error', 'debug', 'verbose'],

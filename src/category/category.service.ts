@@ -59,6 +59,9 @@ export class CategoryService implements OnModuleInit {
       data: categories.map((cat) => ({
         category_id: cat._id,
         category_name: cat.category_name,
+        name: cat.category_name,
+        label: cat.category_name,
+        value: cat.category_name,
         description: cat.description,
       })),
     };
