@@ -30,8 +30,10 @@ export class TeacherController {
   create(
     @Body() dto: CreateTeacherDto,
     @UploadedFile() file?: Express.Multer.File,
+    @Req() req?: any,
   ) {
-    return this.teacherService.create(dto, file);
+    const origin = req?.headers?.origin || req?.headers?.referer;
+    return this.teacherService.create(dto, file, origin);
   }
 
   // GET /auth/course/v1/get-all-Instructor

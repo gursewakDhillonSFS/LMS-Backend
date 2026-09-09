@@ -40,7 +40,11 @@ export class TeacherService {
   ) {}
 
   // ─── Called during instructor onboarding OR when inviting a teacher ──────────────────
-  async create(dto: CreateTeacherDto, file?: Express.Multer.File) {
+  async create(
+    dto: CreateTeacherDto,
+    file?: Express.Multer.File,
+    origin?: string,
+  ) {
     // 1. Prevent duplicate teacher profile
     const existingTeacher = await this.teacherModel.findOne({
       email: dto.email.toLowerCase(),
@@ -134,8 +138,14 @@ export class TeacherService {
         { expiresIn: '48h' },
       );
 
-      const frontendUrl =
-        this.configService.get('FRONTEND_URL') || 'http://localhost:3000';
+      let frontendUrl =
+        this.configService.get('FRONTEND_URL') ||
+        'https://lms-frontend-beige-alpha.vercel.app';
+      if (origin) {
+        try {
+          frontendUrl = new URL(origin).origin;
+        } catch (_) {}
+      }
       setupLink = `${frontendUrl}/setup-password?token=${setupToken}&userId=${newUser._id}`;
 
       this.logger.log(
