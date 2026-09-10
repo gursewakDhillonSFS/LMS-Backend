@@ -94,6 +94,49 @@ export class AnnouncementController {
     return this.announcementService.delete(id, instructorId);
   }
 
+  // GET /auth/announcement/v1/my-announcements?tab=announcement&page=1&limit=10&search=
+  @Get('my-announcements')
+  getMyAnnouncements(
+    @Req() req: AuthenticatedRequest,
+    @Query('tab') tab: 'announcement' | 'draft' = 'announcement',
+    @Query('page') page = '1',
+    @Query('limit') limit = '10',
+    @Query('search') search?: string,
+  ) {
+    return this.announcementService.getMyAnnouncements(
+      req.user.userId,
+      req.user.role,
+      tab,
+      Number(page),
+      Number(limit),
+      search,
+    );
+  }
+
+  // GET /auth/announcement/v1/unread-count
+  @Get('unread-count')
+  getUnreadCount(@Req() req: AuthenticatedRequest) {
+    return this.announcementService.getUnreadCount(
+      req.user.userId,
+      req.user.role,
+    );
+  }
+
+  // POST /auth/announcement/v1/mark-all-read
+  @Post('mark-all-read')
+  markAllRead(@Req() req: AuthenticatedRequest) {
+    return this.announcementService.markAllAsRead(
+      req.user.userId,
+      req.user.role,
+    );
+  }
+
+  // POST /auth/announcement/v1/trigger-due-date-check
+  @Post('trigger-due-date-check')
+  triggerDueDateCheck() {
+    return this.announcementService.checkAndCreateDueDateAnnouncements();
+  }
+
   // POST /auth/announcement/v1/trigger-scheduler (instructor only)
   @UseGuards(InstructorOnlyGuard)
   @Post('trigger-scheduler')

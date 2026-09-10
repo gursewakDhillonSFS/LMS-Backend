@@ -10,6 +10,8 @@ import {
 } from './schemas/announcement.schema';
 import { Course, CourseSchema } from '../course/schemas/course.schema';
 import { User, UserSchema } from '../user/schemas/user.schema';
+import { Assignment, AssignmentSchema } from '../assignment/schemas/assignment.schema';
+import { Quiz, QuizSchema } from '../quiz/schemas/quiz.schema';
 import { AuthModule } from '../auth/auth.module';
 
 @Module({
@@ -18,6 +20,8 @@ import { AuthModule } from '../auth/auth.module';
       { name: Announcement.name, schema: AnnouncementSchema },
       { name: Course.name, schema: CourseSchema },
       { name: User.name, schema: UserSchema },
+      { name: Assignment.name, schema: AssignmentSchema },
+      { name: Quiz.name, schema: QuizSchema },
     ]),
     AuthModule,
   ],

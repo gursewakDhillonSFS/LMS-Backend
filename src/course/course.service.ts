@@ -668,7 +668,11 @@ export class CourseService {
           batch: (c.batch || [])
             .filter((b) => {
               if (callingUser && String(callingUser.role) === 'teacher' && callingUser.teacherId) {
-                return b.teacher === String(callingUser.teacherId);
+                const isHeadOrInstructor =
+                  String(c.head_teacher) === String(callingUser.teacherId) ||
+                  String(c.instructor_id) === String(callingUser.teacherId);
+                if (isHeadOrInstructor) return true;
+                return String(b.teacher) === String(callingUser.teacherId);
               }
               return true;
             })

@@ -28,10 +28,25 @@ export class Announcement {
 
   @Prop({ type: Date, default: null })
   publishedAt: Date | null;
+
+  @Prop({ type: [{ type: Types.ObjectId, ref: 'User' }], default: [] })
+  readBy: Types.ObjectId[];
+
+  @Prop({
+    type: String,
+    enum: ['general', 'assignment_due', 'quiz_due'],
+    default: 'general',
+  })
+  type: string;
+
+  @Prop({ type: String, default: null })
+  referenceId: string | null;
 }
 
 export const AnnouncementSchema = SchemaFactory.createForClass(Announcement);
 AnnouncementSchema.index({ courseId: 1, status: 1 });
 AnnouncementSchema.index({ scheduledAt: 1, status: 1 });
 AnnouncementSchema.index({ instructorId: 1 });
+AnnouncementSchema.index({ readBy: 1 });
+AnnouncementSchema.index({ referenceId: 1, type: 1 });
 

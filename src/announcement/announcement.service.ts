@@ -4,8 +4,8 @@ import {
   BadRequestException,
   ForbiddenException,
 } from '@nestjs/common';
-import { InjectModel } from '@nestjs/mongoose';
-import { Model, Types } from 'mongoose';
+import { InjectModel, InjectConnection } from '@nestjs/mongoose';
+import { Model, Types, Connection } from 'mongoose';
 import {
   Announcement,
   AnnouncementDocument,
@@ -16,6 +16,11 @@ import {
 } from './dto/announcement.dto';
 import { Course, CourseDocument } from '../course/schemas/course.schema';
 import { User, UserDocument } from '../user/schemas/user.schema';
+import {
+  Assignment,
+  AssignmentDocument,
+} from '../assignment/schemas/assignment.schema';
+import { Quiz, QuizDocument } from '../quiz/schemas/quiz.schema';
 import { AnnouncementGateway } from './announcement.gateway';
 
 @Injectable()
@@ -29,6 +34,14 @@ export class AnnouncementService {
 
     @InjectModel(User.name)
     private readonly userModel: Model<UserDocument>,
+
+    @InjectModel(Assignment.name)
+    private readonly assignmentModel: Model<AssignmentDocument>,
+
+    @InjectModel(Quiz.name)
+    private readonly quizModel: Model<QuizDocument>,
+
+    @InjectConnection() private readonly connection: Connection,
 
     private readonly gateway: AnnouncementGateway,
   ) {}
@@ -51,6 +64,24 @@ export class AnnouncementService {
 
     const instructor = await this.userModel.findById(instructorId);
     if (!instructor) throw new NotFoundException('Instructor not found');
+
+    if (instructor.role === 'teacher' && instructor.teacherId) {
+      const isHead = String(course.head_teacher) === String(instructor.teacherId);
+      const isInstructor = String(course.instructor_id) === String(instructor.teacherId);
+      const teachesBatch = dto.batchId
+        ? (course.batch as { _id?: Types.ObjectId; teacher?: string | null }[])?.some(
+            (b) =>
+              b._id?.toString() === dto.batchId &&
+              String(b.teacher) === String(instructor.teacherId),
+          )
+        : false;
+
+      if (!isHead && !isInstructor && !teachesBatch) {
+        throw new ForbiddenException(
+          'You are not authorized to post announcements for this course or batch',
+        );
+      }
+    }
 
     let status = dto.status || 'published';
     let scheduledAt: Date | null = null;
@@ -84,6 +115,9 @@ export class AnnouncementService {
       status,
       scheduledAt,
       publishedAt,
+      readBy: [new Types.ObjectId(instructorId)],
+      type: 'general',
+      referenceId: null,
     });
 
     const formatted = await this.formatAnnouncement(announcement);
@@ -360,6 +394,314 @@ export class AnnouncementService {
     };
   }
 
+  // ─── Resolve Accessible Filters Based on Role ─────────────────────────────
+  private async resolveAccessibleFilters(userId: string, role: string) {
+    const dbUser = await this.userModel.findById(userId).lean();
+    if (!dbUser) return { _id: null };
+
+    if (role === 'instructor') {
+      const courseFilter: Record<string, unknown> = {
+        $or: [
+          { created_by: dbUser._id },
+          ...(dbUser.organisationId
+            ? [{ organisation_id: dbUser.organisationId }]
+            : []),
+        ],
+      };
+      const courses = await this.courseModel
+        .find(courseFilter)
+        .select('_id')
+        .lean();
+      const courseIds = courses.map((c) => c._id);
+      return {
+        $or: [
+          { instructorId: new Types.ObjectId(userId) },
+          { courseId: { $in: courseIds } },
+        ],
+      };
+    }
+
+    if (role === 'teacher' && dbUser.teacherId) {
+      const courses = await this.courseModel
+        .find({
+          organisation_id: dbUser.organisationId,
+          $or: [
+            { head_teacher: dbUser.teacherId },
+            { instructor_id: dbUser.teacherId },
+            { 'batch.teacher': String(dbUser.teacherId) },
+          ],
+        })
+        .select('batch head_teacher instructor_id')
+        .lean();
+
+      const orConditions: Record<string, unknown>[] = [
+        { instructorId: new Types.ObjectId(userId) },
+      ];
+
+      courses.forEach((c) => {
+        const isHeadOrInstructor =
+          String(c.head_teacher) === String(dbUser.teacherId) ||
+          String(c.instructor_id) === String(dbUser.teacherId);
+
+        if (isHeadOrInstructor) {
+          orConditions.push({ courseId: c._id });
+        } else {
+          const assignedBatchIds: string[] = [];
+          (c.batch || []).forEach(
+            (b: { _id?: Types.ObjectId; teacher?: string | null }) => {
+              if (b._id && String(b.teacher) === String(dbUser.teacherId)) {
+                assignedBatchIds.push(String(b._id));
+              }
+            },
+          );
+          orConditions.push({
+            courseId: c._id,
+            batchId: { $in: [null, '', ...assignedBatchIds] },
+          });
+        }
+      });
+
+      return orConditions.length > 0 ? { $or: orConditions } : { _id: null };
+    }
+
+    // Student: find courses and batches from batch_enrolled_students + dbUser.batchIds
+    const enrollments = await this.connection
+      .collection('batch_enrolled_students')
+      .find({ student_id: new Types.ObjectId(userId) })
+      .toArray();
+
+    const courseBatchMap = new Map<string, Set<string>>();
+    enrollments.forEach((e) => {
+      if (e.course_id) {
+        const cId = String(e.course_id);
+        if (!courseBatchMap.has(cId)) courseBatchMap.set(cId, new Set());
+        if (e.batch_id) courseBatchMap.get(cId)!.add(String(e.batch_id));
+      }
+    });
+
+    const orConditions: Record<string, unknown>[] = [];
+    courseBatchMap.forEach((batchSet, courseId) => {
+      orConditions.push({
+        courseId: new Types.ObjectId(courseId),
+        batchId: { $in: [null, '', ...Array.from(batchSet)] },
+      });
+    });
+
+    if (dbUser.batchIds && dbUser.batchIds.length > 0) {
+      orConditions.push({
+        batchId: { $in: dbUser.batchIds.map((id) => String(id)) },
+      });
+    }
+
+    return orConditions.length > 0 ? { $or: orConditions } : { _id: null };
+  }
+
+  // ─── Get My Announcements (Personalized per Role) ──────────────────────────
+  async getMyAnnouncements(
+    userId: string,
+    role: string,
+    tab: 'announcement' | 'draft' = 'announcement',
+    page = 1,
+    limit = 10,
+    search?: string,
+  ) {
+    const skip = (page - 1) * limit;
+
+    let filter: Record<string, unknown> = {};
+
+    if (tab === 'draft') {
+      filter = {
+        instructorId: new Types.ObjectId(userId),
+        status: 'draft',
+      };
+    } else {
+      const accessFilter = await this.resolveAccessibleFilters(userId, role);
+      filter = {
+        status: 'published',
+        ...accessFilter,
+      };
+    }
+
+    if (search) {
+      const regex = new RegExp(search, 'i');
+      filter.$and = [
+        ...(filter.$and ? (filter.$and as unknown[]) : []),
+        { $or: [{ title: regex }, { message: regex }] },
+      ];
+    }
+
+    const [announcements, total] = await Promise.all([
+      this.announcementModel
+        .find(filter)
+        .sort({ publishedAt: -1, createdAt: -1 })
+        .skip(skip)
+        .limit(limit),
+      this.announcementModel.countDocuments(filter),
+    ]);
+
+    const enriched = await Promise.all(
+      announcements.map((ann) => this.formatAnnouncement(ann)),
+    );
+
+    return {
+      status: true,
+      data: {
+        announcements: enriched,
+        total,
+        page,
+        totalPages: Math.ceil(total / limit),
+      },
+    };
+  }
+
+  // ─── Get Unread Count ─────────────────────────────────────────────────────
+  async getUnreadCount(userId: string, role: string) {
+    const accessFilter = await this.resolveAccessibleFilters(userId, role);
+    const filter: Record<string, unknown> = {
+      status: 'published',
+      readBy: { $ne: new Types.ObjectId(userId) },
+      ...accessFilter,
+    };
+
+    const count = await this.announcementModel.countDocuments(filter);
+    return {
+      status: true,
+      data: {
+        unreadCount: count,
+      },
+    };
+  }
+
+  // ─── Mark All Announcements As Read ───────────────────────────────────────
+  async markAllAsRead(userId: string, role: string) {
+    const accessFilter = await this.resolveAccessibleFilters(userId, role);
+    const filter: Record<string, unknown> = {
+      status: 'published',
+      readBy: { $ne: new Types.ObjectId(userId) },
+      ...accessFilter,
+    };
+
+    await this.announcementModel.updateMany(filter, {
+      $addToSet: { readBy: new Types.ObjectId(userId) },
+    });
+
+    return {
+      status: true,
+      message: 'All announcements marked as read',
+    };
+  }
+
+  // ─── Check and Create Automated Due Date Announcements ────────────────────
+  async checkAndCreateDueDateAnnouncements() {
+    const now = new Date();
+    const in24Hours = new Date(now.getTime() + 24 * 60 * 60 * 1000);
+
+    let createdCount = 0;
+
+    // 1. Check published assignments due within the next 24 hours
+    const upcomingAssignments = await this.assignmentModel
+      .find({
+        status: 'published',
+        dueDate: { $gt: now, $lte: in24Hours },
+      })
+      .lean();
+
+    for (const assignment of upcomingAssignments) {
+      const existing = await this.announcementModel.findOne({
+        referenceId: String(assignment._id),
+        type: 'assignment_due',
+      });
+
+      if (!existing) {
+        const course = await this.courseModel
+          .findById(assignment.courseId)
+          .select('course_name created_by')
+          .lean();
+
+        const formattedDate = new Date(assignment.dueDate).toLocaleString(
+          'en-US',
+          {
+            dateStyle: 'medium',
+            timeStyle: 'short',
+          },
+        );
+
+        const instructorId =
+          assignment.created_by || course?.created_by || assignment.courseId;
+
+        const announcement = await this.announcementModel.create({
+          title: `Reminder: Assignment "${assignment.assignmentName}" Due Soon`,
+          message: `<p>The assignment <strong>${assignment.assignmentName}</strong> is due on <strong>${formattedDate}</strong>. Please ensure you submit your work before the deadline.</p>`,
+          courseId: assignment.courseId,
+          batchId: assignment.batchId || null,
+          instructorId: new Types.ObjectId(String(instructorId)),
+          status: 'published',
+          publishedAt: new Date(),
+          type: 'assignment_due',
+          referenceId: String(assignment._id),
+          readBy: [],
+        });
+
+        const formatted = await this.formatAnnouncement(announcement);
+        this.gateway.broadcastNewAnnouncement(formatted);
+        createdCount++;
+      }
+    }
+
+    // 2. Check published quizzes due within the next 24 hours
+    const upcomingQuizzes = await this.quizModel
+      .find({
+        status: 'published',
+        dueDate: { $gt: now, $lte: in24Hours },
+      })
+      .lean();
+
+    for (const quiz of upcomingQuizzes) {
+      const existing = await this.announcementModel.findOne({
+        referenceId: String(quiz._id),
+        type: 'quiz_due',
+      });
+
+      if (!existing) {
+        const course = await this.courseModel
+          .findById(quiz.courseId)
+          .select('course_name created_by')
+          .lean();
+
+        const formattedDate = new Date(quiz.dueDate).toLocaleString('en-US', {
+          dateStyle: 'medium',
+          timeStyle: 'short',
+        });
+
+        const instructorId =
+          quiz.created_by || course?.created_by || quiz.courseId;
+
+        const announcement = await this.announcementModel.create({
+          title: `Reminder: Quiz "${quiz.quizName}" Due Soon`,
+          message: `<p>The quiz <strong>${quiz.quizName}</strong> is due on <strong>${formattedDate}</strong>. Please make sure to complete it before the deadline.</p>`,
+          courseId: quiz.courseId,
+          batchId: quiz.batchId || null,
+          instructorId: new Types.ObjectId(String(instructorId)),
+          status: 'published',
+          publishedAt: new Date(),
+          type: 'quiz_due',
+          referenceId: String(quiz._id),
+          readBy: [],
+        });
+
+        const formatted = await this.formatAnnouncement(announcement);
+        this.gateway.broadcastNewAnnouncement(formatted);
+        createdCount++;
+      }
+    }
+
+    return {
+      status: true,
+      message: `Due date check complete. Created ${createdCount} auto-announcements.`,
+      count: createdCount,
+    };
+  }
+
   // ─── Helper Formatter ─────────────────────────────────────────────────────
   private async formatAnnouncement(ann: AnnouncementDocument) {
     const course = await this.courseModel
@@ -391,6 +733,12 @@ export class AnnouncementService {
       instructorAvatar:
         (instructor as unknown as { profileImg?: string })?.profileImg || null,
       status: ann.status,
+      type: (ann as unknown as { type?: string })?.type || 'general',
+      referenceId:
+        (ann as unknown as { referenceId?: string | null })?.referenceId || null,
+      readBy: (
+        (ann as unknown as { readBy?: Types.ObjectId[] })?.readBy || []
+      ).map((id) => String(id)),
       scheduledAt: ann.scheduledAt
         ? ann.scheduledAt.toISOString().split('T')[0]
         : null,

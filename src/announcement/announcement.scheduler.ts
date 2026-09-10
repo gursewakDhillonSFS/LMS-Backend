@@ -23,4 +23,20 @@ export class AnnouncementScheduler {
       this.logger.error('❌ Error executing midnight scheduled publish:', err);
     }
   }
+
+  // Run every hour to check for impending assignment/quiz due dates (< 24 hrs)
+  @Cron(CronExpression.EVERY_HOUR)
+  async handleDueDateCheck() {
+    this.logger.log(
+      '⏰ Running hourly scheduler to check upcoming assignment and quiz due dates...',
+    );
+    try {
+      const res = await this.service.checkAndCreateDueDateAnnouncements();
+      this.logger.log(
+        `⏰ Finished due date check. Created ${res.count} reminder announcements.`,
+      );
+    } catch (err) {
+      this.logger.error('❌ Error executing due date check:', err);
+    }
+  }
 }

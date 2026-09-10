@@ -80,7 +80,35 @@ export class AnnouncementGateway
         role: payload.role,
       } as SocketUser;
 
-      this.logger.log(`Client connected: ${client.id} (${payload.email})`);
+      // Automatically join client to their personal room
+      client.join(`user_${payload.sub}`);
+
+      // Automatically join client to all allowed course and batch rooms
+      try {
+        const allowedCourseIds = await this.resolveAllowedCourseIds(
+          client.data.user,
+        );
+        const allowedBatchIds = await this.resolveAllowedBatchIds(
+          client.data.user,
+        );
+
+        allowedCourseIds.forEach((courseId) => {
+          client.join(`course_${courseId}`);
+        });
+
+        allowedBatchIds.forEach((batchId) => {
+          client.join(`batch_${batchId}`);
+        });
+
+        this.logger.log(
+          `Client connected: ${client.id} (${payload.email}, role: ${payload.role}) — auto-joined ${allowedCourseIds.size} courses, ${allowedBatchIds.size} batches`,
+        );
+      } catch (joinErr) {
+        this.logger.error(
+          `Error auto-joining rooms for client ${client.id}:`,
+          joinErr,
+        );
+      }
     } catch (err) {
       this.logger.warn(`Client ${client.id} rejected: invalid token`);
       client.disconnect(true);
@@ -200,12 +228,20 @@ export class AnnouncementGateway
     if (user.role === 'teacher' && dbUser.teacherId) {
       const courses = await this.courseModel
         .find({ organisation_id: dbUser.organisationId })
-        .select('batch')
+        .select('batch head_teacher instructor_id')
         .lean();
       courses.forEach((c) => {
+        const isHeadOrInstructor =
+          String(c.head_teacher) === String(dbUser.teacherId) ||
+          String(c.instructor_id) === String(dbUser.teacherId);
+
         (c.batch || []).forEach(
           (b: { _id?: Types.ObjectId; teacher?: string | null }) => {
-            if (b._id && String(b.teacher) === String(dbUser.teacherId)) {
+            if (
+              b._id &&
+              (isHeadOrInstructor ||
+                String(b.teacher) === String(dbUser.teacherId))
+            ) {
               allowed.add(String(b._id));
             }
           },
@@ -244,6 +280,13 @@ export class AnnouncementGateway
         `Broadcasting new announcement to course room: ${targetRoom}`,
       );
       this.server.to(targetRoom).emit('announcement:new', payload);
+    }
+
+    // Also notify author's user room if present
+    if (announcement.instructorId) {
+      this.server
+        .to(`user_${announcement.instructorId}`)
+        .emit('announcement:new', payload);
     }
   }
 
