@@ -72,6 +72,9 @@ export class User {
 
   @Prop({ default: null })
   resetOtpExpiry: Date;
+
+  @Prop({ enum: ['en', 'pa', 'fr'], default: 'en' })
+  preferredLanguage: 'en' | 'pa' | 'fr';
 }
 
 export const UserSchema = SchemaFactory.createForClass(User);

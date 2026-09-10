@@ -121,4 +121,8 @@ export class UpdateProfileDto {
   @IsOptional()
   @IsEmail()
   email?: string;
+
+  @IsOptional()
+  @IsString()
+  preferredLanguage?: 'en' | 'pa' | 'fr';
 }

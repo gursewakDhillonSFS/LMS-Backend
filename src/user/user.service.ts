@@ -93,6 +93,7 @@ export class UserService {
         organization_id: user.organisationId ?? null,
         instructor_id: user.teacherId ?? null,
         subscription_status: user.isSubscribed,
+        preferred_language: (user as any).preferredLanguage || 'en',
       },
     };
   }
@@ -357,6 +358,7 @@ export class UserService {
           firstName: dto.firstName ?? user.firstName,
           lastName: dto.lastName ?? user.lastName,
           profileImg: profileImgUrl,
+          ...(dto.preferredLanguage ? { preferredLanguage: dto.preferredLanguage } : {}),
         },
       },
       { new: true },
