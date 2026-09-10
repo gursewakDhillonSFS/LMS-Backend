@@ -281,13 +281,6 @@ export class AnnouncementGateway
       );
       this.server.to(targetRoom).emit('announcement:new', payload);
     }
-
-    // Also notify author's user room if present
-    if (announcement.instructorId) {
-      this.server
-        .to(`user_${announcement.instructorId}`)
-        .emit('announcement:new', payload);
-    }
   }
 
   broadcastDeletedAnnouncement(

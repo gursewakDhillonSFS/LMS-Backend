@@ -94,7 +94,7 @@ export class AnnouncementController {
     return this.announcementService.delete(id, instructorId);
   }
 
-  // GET /auth/announcement/v1/my-announcements?tab=announcement&page=1&limit=10&search=
+  // GET /auth/announcement/v1/my-announcements?tab=announcement&page=1&limit=10&search=&excludeSelf=true
   @Get('my-announcements')
   getMyAnnouncements(
     @Req() req: AuthenticatedRequest,
@@ -102,6 +102,7 @@ export class AnnouncementController {
     @Query('page') page = '1',
     @Query('limit') limit = '10',
     @Query('search') search?: string,
+    @Query('excludeSelf') excludeSelf?: string,
   ) {
     return this.announcementService.getMyAnnouncements(
       req.user.userId,
@@ -110,6 +111,7 @@ export class AnnouncementController {
       Number(page),
       Number(limit),
       search,
+      excludeSelf === 'true' || excludeSelf === '1',
     );
   }
 

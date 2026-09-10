@@ -504,6 +504,7 @@ export class AnnouncementService {
     page = 1,
     limit = 10,
     search?: string,
+    excludeSelf = false,
   ) {
     const skip = (page - 1) * limit;
 
@@ -520,6 +521,10 @@ export class AnnouncementService {
         status: 'published',
         ...accessFilter,
       };
+
+      if (excludeSelf) {
+        filter.instructorId = { $ne: new Types.ObjectId(userId) };
+      }
     }
 
     if (search) {
@@ -559,6 +564,7 @@ export class AnnouncementService {
     const accessFilter = await this.resolveAccessibleFilters(userId, role);
     const filter: Record<string, unknown> = {
       status: 'published',
+      instructorId: { $ne: new Types.ObjectId(userId) }, // Never count user's own created announcements
       readBy: { $ne: new Types.ObjectId(userId) },
       ...accessFilter,
     };
@@ -577,6 +583,7 @@ export class AnnouncementService {
     const accessFilter = await this.resolveAccessibleFilters(userId, role);
     const filter: Record<string, unknown> = {
       status: 'published',
+      instructorId: { $ne: new Types.ObjectId(userId) },
       readBy: { $ne: new Types.ObjectId(userId) },
       ...accessFilter,
     };
