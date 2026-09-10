@@ -401,4 +401,21 @@ export class TranslationService implements OnModuleInit {
 
     await this.queueService.enqueueCourseTranslation(courseId, ['pa', 'fr']);
   }
+
+  /**
+   * Enqueues translation for all existing published courses in database
+   */
+  async bulkEnqueueAllCourses(force = false): Promise<number> {
+    const courses = await this.courseModel
+      .find({ course_status: 'published' }, { _id: 1 })
+      .lean();
+    for (const course of courses) {
+      await this.queueService.enqueueCourseTranslation(
+        course._id.toString(),
+        ['pa', 'fr'],
+        force,
+      );
+    }
+    return courses.length;
+  }
 }

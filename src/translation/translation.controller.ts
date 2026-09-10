@@ -72,4 +72,19 @@ export class TranslationController {
       message: `Translation regeneration queued for [${locales.join(', ')}]`,
     };
   }
+
+  /**
+   * POST /auth/course/v1/translations/bulk/all
+   * Enqueues translation jobs for ALL published courses in the database
+   */
+  @UseGuards(JwtAuthGuard, InstructorOnlyGuard)
+  @Post('bulk/all')
+  async bulkEnqueueAllCourses(@Body() body: { force?: boolean }) {
+    const count = await this.translationService.bulkEnqueueAllCourses(body?.force);
+    return {
+      status: true,
+      message: `Successfully enqueued translations for ${count} courses across Punjabi and French`,
+      totalCourses: count,
+    };
+  }
 }
