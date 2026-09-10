@@ -24,6 +24,20 @@ import {
 } from './schemas/course-progress.schema';
 import { CommunicationService } from '../communication/communication.service';
 import {
+  CourseTranslation,
+  CourseTranslationDocument,
+} from './schemas/course-translation.schema';
+import {
+  LessonTranslation,
+  LessonTranslationDocument,
+} from './schemas/lesson-translation.schema';
+import {
+  SubLessonTranslation,
+  SubLessonTranslationDocument,
+} from './schemas/sublesson-translation.schema';
+import { TranslationQueueService } from '../translation/translation-queue.service';
+import { TranslationService } from '../translation/translation.service';
+import {
   CreateStep1Dto,
   CreateStep2Dto,
   CreateStep3Dto,
@@ -59,14 +73,49 @@ export class CourseService {
     private readonly cloudinary: CloudinaryService,
     @InjectConnection() private readonly connection: Connection,
     private readonly communicationService: CommunicationService,
+    @InjectModel(CourseTranslation.name)
+    private readonly courseTranslationModel: Model<CourseTranslationDocument>,
+    @InjectModel(LessonTranslation.name)
+    private readonly lessonTranslationModel: Model<LessonTranslationDocument>,
+    @InjectModel(SubLessonTranslation.name)
+    private readonly subLessonTranslationModel: Model<SubLessonTranslationDocument>,
+    private readonly translationQueueService: TranslationQueueService,
+    private readonly translationService: TranslationService,
   ) {}
 
   // ─── Helper: build flat course response ───────────────────────────────────
-  private async buildCourseResponse(course: CourseDocument, userId?: string | null) {
+  private async buildCourseResponse(
+    course: CourseDocument,
+    userId?: string | null,
+    locale = 'en',
+  ) {
     let callingUser: any = null;
     if (userId) {
       callingUser = await this.userModel.findById(userId).lean();
     }
+
+    // Look up translation if requested locale is Punjabi or French
+    let translation: CourseTranslationDocument | null = null;
+    if (locale && ['pa', 'fr'].includes(locale)) {
+      translation = await this.courseTranslationModel.findOne({
+        course_id: course._id,
+        locale,
+        status: { $in: ['completed', 'outdated'] },
+      });
+    }
+
+    const courseName = translation?.course_name || course.course_name;
+    const aboutCourse = translation?.about_course || course.about_course;
+    const description = translation?.description || course.description;
+    const overview = translation?.overview || course.overview;
+    const learningPoints =
+      translation?.learning_points && translation.learning_points.length > 0
+        ? translation.learning_points
+        : course.learning_points;
+    const skillsYouGain =
+      translation?.skills_you_gain && translation.skills_you_gain.length > 0
+        ? translation.skills_you_gain
+        : course.skills_you_gain;
 
     // Populate head teacher
     let headTeacher: TeacherDocument | null = null;
@@ -104,9 +153,24 @@ export class CourseService {
           if (c.head_teacher) {
             teacher = await this.teacherModel.findById(c.head_teacher).lean();
           }
+
+          let relCourseName = c.course_name;
+          if (locale && ['pa', 'fr'].includes(locale)) {
+            const relTrans = await this.courseTranslationModel
+              .findOne({
+                course_id: c._id,
+                locale,
+                status: { $in: ['completed', 'outdated'] },
+              })
+              .lean();
+            if (relTrans?.course_name) {
+              relCourseName = relTrans.course_name;
+            }
+          }
+
           return {
             course_id: c._id,
-            course_name: c.course_name,
+            course_name: relCourseName,
             course_image_url: c.course_image_url,
             course_status: c.course_status,
             course_type: c.course_type,
@@ -143,7 +207,7 @@ export class CourseService {
 
     const responseObj = {
       course_id: course._id,
-      course_name: course.course_name,
+      course_name: courseName,
       course_image_url: course.course_image_url,
       course_price: course.course_price,
       course_type: course.course_type,
@@ -161,16 +225,24 @@ export class CourseService {
             return true;
           })
         : course.batch,
-      learning_points: course.learning_points,
-      course_learning_points: course.learning_points, // alias used by CourseInfoDataProp
-      skills_you_gain: course.skills_you_gain,
-      about_course: course.about_course,
-      description: course.description,
-      overview: course.overview,
+      learning_points: learningPoints,
+      course_learning_points: learningPoints, // alias used by CourseInfoDataProp
+      skills_you_gain: skillsYouGain,
+      about_course: aboutCourse,
+      description: description,
+      overview: overview,
       enrolled_user_count: course.enrolled_user_count,
       average_rating: course.average_rating,
       review_count: course.review_count,
       created_at: (course as unknown as { createdAt?: Date }).createdAt,
+      // Translation metadata
+      current_locale: locale,
+      translation_status: translation
+        ? translation.status
+        : locale === 'en'
+          ? 'original'
+          : 'pending',
+      translation_source: translation ? translation.source : 'original',
       // Category
       category_id: course.category_id,
       category_name: category?.category_name ?? null,
@@ -368,6 +440,15 @@ export class CourseService {
       },
     });
 
+    // Asynchronously trigger automatic multilingual translation (Punjabi & French)
+    this.translationQueueService
+      .enqueueCourseTranslation(dto.course_id, ['pa', 'fr'])
+      .catch((err) => {
+        this.logger.error(
+          `Failed to enqueue course translation for ${dto.course_id}: ${err.message}`,
+        );
+      });
+
     return {
       status: true,
       message:
@@ -429,6 +510,12 @@ export class CourseService {
       },
     });
 
+    if (dto.course_name) {
+      this.translationService.onCourseUpdated(dto.course_id).catch((err) => {
+        this.logger.error(`Error updating translation on step 1: ${err.message}`);
+      });
+    }
+
     return {
       status: true,
       message: 'Course info updated',
@@ -441,6 +528,10 @@ export class CourseService {
     await this.courseModel.findByIdAndUpdate(dto.course_id, {
       $set: { learning_points: dto.learning_points ?? [] },
     });
+    this.translationService.onCourseUpdated(dto.course_id).catch((err) => {
+      this.logger.error(`Error updating translation on step 2: ${err.message}`);
+    });
+
     return {
       status: true,
       message: 'Learning points updated',
@@ -458,6 +549,10 @@ export class CourseService {
         }),
       },
     });
+    this.translationService.onCourseUpdated(dto.course_id).catch((err) => {
+      this.logger.error(`Error updating translation on step 3: ${err.message}`);
+    });
+
     return {
       status: true,
       message: 'Skills updated',
@@ -470,6 +565,10 @@ export class CourseService {
     await this.courseModel.findByIdAndUpdate(dto.course_id, {
       $set: { about_course: dto.about_course },
     });
+    this.translationService.onCourseUpdated(dto.course_id).catch((err) => {
+      this.logger.error(`Error updating translation on step 4: ${err.message}`);
+    });
+
     return {
       status: true,
       message: 'About updated',
@@ -488,6 +587,12 @@ export class CourseService {
         ...(dto.description !== undefined && { description: dto.description }),
       },
     });
+    if (dto.description !== undefined) {
+      this.translationService.onCourseUpdated(dto.course_id).catch((err) => {
+        this.logger.error(`Error updating translation on step 5: ${err.message}`);
+      });
+    }
+
     return {
       status: true,
       message: 'Teacher info updated',
@@ -500,6 +605,10 @@ export class CourseService {
     await this.courseModel.findByIdAndUpdate(dto.course_id, {
       $set: { overview: dto.overview },
     });
+    this.translationService.onCourseUpdated(dto.course_id).catch((err) => {
+      this.logger.error(`Error updating translation on step 6: ${err.message}`);
+    });
+
     return {
       status: true,
       message: 'Overview updated',
@@ -519,6 +628,20 @@ export class CourseService {
     await this.courseModel.findByIdAndUpdate(dto.course_id, {
       $set: updatePayload,
     });
+
+    if (dto.status === 'published') {
+      this.translationQueueService
+        .enqueueCourseTranslation(dto.course_id, ['pa', 'fr'])
+        .catch((err) => {
+          this.logger.error(
+            `Failed to enqueue course translation on publish: ${err.message}`,
+          );
+        });
+    } else if (dto.course_name || dto.description !== undefined) {
+      this.translationService.onCourseUpdated(dto.course_id).catch((err) => {
+        this.logger.error(`Error updating translation on course status change: ${err.message}`);
+      });
+    }
 
     return {
       status: true,
@@ -544,6 +667,7 @@ export class CourseService {
       organisation_id?: string;
     },
     userId: string | null,
+    locale = 'en',
   ) {
     const page = Math.max(1, parseInt(query.page || '1'));
     const size = Math.min(50, Math.max(1, parseInt(query.size || '10')));
@@ -629,6 +753,24 @@ export class CourseService {
       }
     }
 
+    // Pre-fetch translations for requested locale if Punjabi or French
+    const translationMap = new Map<string, string>();
+    if (locale && ['pa', 'fr'].includes(locale)) {
+      const courseIds = courses.map((c) => c._id);
+      const transDocs = await this.courseTranslationModel
+        .find({
+          course_id: { $in: courseIds },
+          locale,
+          status: { $in: ['completed', 'outdated'] },
+        })
+        .lean();
+      for (const td of transDocs) {
+        if (td.course_name) {
+          translationMap.set(td.course_id.toString(), td.course_name);
+        }
+      }
+    }
+
     // Build list items with populated fields
     const course_list = await Promise.all(
       courses.map(async (c) => {
@@ -643,9 +785,12 @@ export class CourseService {
           course_id: new Types.ObjectId(c._id.toString()),
         });
 
+        const localizedCourseName =
+          translationMap.get(c._id.toString()) || c.course_name;
+
         return {
           course_id: c._id,
-          course_name: c.course_name,
+          course_name: localizedCourseName,
           course_image_url: c.course_image_url,
           course_status: c.course_status,
           course_type: c.course_type,
@@ -691,11 +836,15 @@ export class CourseService {
     };
   }
 
-  async getCourseDetails(courseId: string, userId?: string | null) {
+  async getCourseDetails(
+    courseId: string,
+    userId?: string | null,
+    locale = 'en',
+  ) {
     const course = await this.courseModel.findById(courseId);
     if (!course) throw new NotFoundException('Course not found');
 
-    const detail = await this.buildCourseResponse(course, userId);
+    const detail = await this.buildCourseResponse(course, userId, locale);
     return { status: true, data: detail };
   }
 
@@ -863,9 +1012,9 @@ export class CourseService {
     return { status: true, message: 'Lesson deleted' };
   }
 
-  async getLessonsWithSublessons(courseId: string) {
+  async getLessonsWithSublessons(courseId: string, locale = 'en') {
     const course = await this.courseModel.findById(courseId).lean();
-    const overview = course ? course.overview : '';
+    let overview = course ? course.overview : '';
 
     const lessons = await this.lessonModel
       .find({ course_id: new Types.ObjectId(courseId) })
@@ -878,28 +1027,84 @@ export class CourseService {
       .find({ lesson_id: { $in: lessonIds } })
       .lean();
 
-    const lessonData = lessons.map((l) => ({
-      lesson_id: (l as unknown as { _id: Types.ObjectId })._id,
-      lesson_name: l.lesson_name,
-      lesson_description: l.lesson_description,
-      studyMaterials: l.studyMaterials || [],
-      unlock_after_previous: l.unlock_after_previous,
-      uploaded_at: l.uploaded_at,
-      sublessons: sublessons
-        .filter(
-          (s) =>
-            String(s.lesson_id) ===
-            String((l as unknown as { _id: Types.ObjectId })._id),
-        )
-        .map((s) => ({
-          sublesson_id: (s as unknown as { _id: Types.ObjectId })._id,
-          sublesson_name: s.sublesson_name,
-          sublesson_description: s.sublesson_description,
-          studyMaterials: s.studyMaterials || [],
-          duration: s.duration,
-          uploaded_at: s.uploaded_at,
-        })),
-    }));
+    const lessonTransMap = new Map<string, { name?: string; desc?: string }>();
+    const sublessonTransMap = new Map<
+      string,
+      { name?: string; desc?: string }
+    >();
+
+    if (locale && ['pa', 'fr'].includes(locale)) {
+      const [cTrans, lTrans, sTrans] = await Promise.all([
+        this.courseTranslationModel
+          .findOne({
+            course_id: new Types.ObjectId(courseId),
+            locale,
+            status: { $in: ['completed', 'outdated'] },
+          })
+          .lean(),
+        this.lessonTranslationModel
+          .find({
+            course_id: new Types.ObjectId(courseId),
+            locale,
+            status: { $in: ['completed', 'outdated'] },
+          })
+          .lean(),
+        this.subLessonTranslationModel
+          .find({
+            course_id: new Types.ObjectId(courseId),
+            locale,
+            status: { $in: ['completed', 'outdated'] },
+          })
+          .lean(),
+      ]);
+
+      if (cTrans?.overview) overview = cTrans.overview;
+      for (const lt of lTrans) {
+        lessonTransMap.set(lt.lesson_id.toString(), {
+          name: lt.lesson_name,
+          desc: lt.lesson_description || undefined,
+        });
+      }
+      for (const st of sTrans) {
+        sublessonTransMap.set(st.sublesson_id.toString(), {
+          name: st.sublesson_name,
+          desc: st.sublesson_description || undefined,
+        });
+      }
+    }
+
+    const lessonData = lessons.map((l) => {
+      const transL = lessonTransMap.get(String((l as any)._id));
+      return {
+        lesson_id: (l as unknown as { _id: Types.ObjectId })._id,
+        lesson_name: transL?.name || l.lesson_name,
+        lesson_description:
+          transL?.desc !== undefined ? transL.desc : l.lesson_description,
+        studyMaterials: l.studyMaterials || [],
+        unlock_after_previous: l.unlock_after_previous,
+        uploaded_at: l.uploaded_at,
+        sublessons: sublessons
+          .filter(
+            (s) =>
+              String(s.lesson_id) ===
+              String((l as unknown as { _id: Types.ObjectId })._id),
+          )
+          .map((s) => {
+            const transS = sublessonTransMap.get(String((s as any)._id));
+            return {
+              sublesson_id: (s as unknown as { _id: Types.ObjectId })._id,
+              sublesson_name: transS?.name || s.sublesson_name,
+              sublesson_description:
+                transS?.desc !== undefined
+                  ? transS.desc
+                  : s.sublesson_description,
+              studyMaterials: s.studyMaterials || [],
+              duration: s.duration,
+              uploaded_at: s.uploaded_at,
+            };
+          }),
+      };
+    });
 
     return { status: true, data: { lessons: lessonData, overview } };
   }

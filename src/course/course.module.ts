@@ -19,9 +19,22 @@ import {
 import { Teacher, TeacherSchema } from '../teacher/schemas/teacher.schema';
 import { User, UserSchema } from '../user/schemas/user.schema';
 import { Category, CategorySchema } from '../category/schemas/category.schema';
+import {
+  CourseTranslation,
+  CourseTranslationSchema,
+} from './schemas/course-translation.schema';
+import {
+  LessonTranslation,
+  LessonTranslationSchema,
+} from './schemas/lesson-translation.schema';
+import {
+  SubLessonTranslation,
+  SubLessonTranslationSchema,
+} from './schemas/sublesson-translation.schema';
 import { CloudinaryModule } from '../cloudinary/cloudinary.module';
 import { AuthModule } from '../auth/auth.module';
 import { CommunicationModule } from '../communication/communication.module';
+import { TranslationModule } from '../translation/translation.module';
 
 @Module({
   imports: [
@@ -30,6 +43,9 @@ import { CommunicationModule } from '../communication/communication.module';
       { name: Course.name, schema: CourseSchema },
       { name: Lesson.name, schema: LessonSchema },
       { name: SubLesson.name, schema: SubLessonSchema },
+      { name: CourseTranslation.name, schema: CourseTranslationSchema },
+      { name: LessonTranslation.name, schema: LessonTranslationSchema },
+      { name: SubLessonTranslation.name, schema: SubLessonTranslationSchema },
       // Phase 3/4 schemas — registered now, endpoints added later
       { name: Review.name, schema: ReviewSchema },
       { name: Batch.name, schema: BatchSchema },
@@ -43,6 +59,7 @@ import { CommunicationModule } from '../communication/communication.module';
     CloudinaryModule,
     AuthModule,
     CommunicationModule,
+    TranslationModule,
   ],
   controllers: [CourseController, ReviewController],
   providers: [CourseService],

@@ -40,6 +40,29 @@ const multerMemory = { storage: memoryStorage() };
 export class CourseController {
   constructor(private readonly courseService: CourseService) {}
 
+  private extractLocale(req: any, query?: Record<string, any>): string {
+    if (query?.language && ['en', 'pa', 'fr'].includes(query.language)) {
+      return query.language;
+    }
+    if (query?.lang && ['en', 'pa', 'fr'].includes(query.lang)) {
+      return query.lang;
+    }
+    const acceptLang = req?.headers?.['accept-language'];
+    if (acceptLang) {
+      const primary = acceptLang.split(',')[0].trim().toLowerCase().substring(0, 2);
+      if (['pa', 'fr', 'en'].includes(primary)) {
+        return primary;
+      }
+    }
+    if (
+      req?.user?.preferred_language &&
+      ['en', 'pa', 'fr'].includes(req.user.preferred_language)
+    ) {
+      return req.user.preferred_language;
+    }
+    return 'en';
+  }
+
   // ─────────────────────────────────────────────────────────────────────────
   // CREATE STEPS
   // ─────────────────────────────────────────────────────────────────────────
@@ -173,9 +196,11 @@ export class CourseController {
     @Query() query: Record<string, string>,
     @Req() req: AuthenticatedRequest,
   ) {
+    const locale = this.extractLocale(req, query);
     return this.courseService.getAllCourses(
       query,
       req?.user?.userId || null,
+      locale,
     );
   }
 
@@ -229,9 +254,11 @@ export class CourseController {
   async getCourseDetails(
     @Param('course_id') courseId: string,
     @Req() req: any,
+    @Query() query: Record<string, string>,
   ) {
     const userId = req.user?.userId || req.user?.sub || null;
-    return this.courseService.getCourseDetails(courseId, userId);
+    const locale = this.extractLocale(req, query);
+    return this.courseService.getCourseDetails(courseId, userId, locale);
   }
 
   /**
@@ -315,8 +342,13 @@ export class CourseController {
    */
   @UseGuards(JwtAuthGuard)
   @Get('get-sublesson-lesson')
-  async getLessonsWithSublessons(@Query('course_id') courseId: string) {
-    return this.courseService.getLessonsWithSublessons(courseId);
+  async getLessonsWithSublessons(
+    @Query('course_id') courseId: string,
+    @Req() req: any,
+    @Query() query: Record<string, string>,
+  ) {
+    const locale = this.extractLocale(req, query);
+    return this.courseService.getLessonsWithSublessons(courseId, locale);
   }
 
   // ─────────────────────────────────────────────────────────────────────────

@@ -17,6 +17,7 @@ import { PaymentModule } from './payment/payment.module';
 import { CommunicationModule } from './communication/communication.module';
 import { CertificateModule } from './certificate/certificate.module';
 import { AdminModule } from './admin/admin.module';
+import { TranslationModule } from './translation/translation.module';
 
 @Module({
   imports: [
@@ -44,6 +45,7 @@ import { AdminModule } from './admin/admin.module';
     CommunicationModule,
     CertificateModule,
     AdminModule,
+    TranslationModule,
   ],
 })
 export class AppModule {
