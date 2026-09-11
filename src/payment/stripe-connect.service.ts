@@ -86,8 +86,11 @@ export class StripeConnectService {
     return {
       status: true,
       message: 'Connect onboarding link created',
+      url: accountLink.url,
+      onboarding_url: accountLink.url,
       data: {
         url: accountLink.url,
+        onboarding_url: accountLink.url,
         connect_status: org.stripeConnectStatus,
       },
     };
@@ -198,8 +201,11 @@ export class StripeConnectService {
     return {
       status: true,
       message: 'Connect onboarding link created',
+      url: accountLink.url,
+      onboarding_url: accountLink.url,
       data: {
         url: accountLink.url,
+        onboarding_url: accountLink.url,
         connect_status: teacher.stripeConnectStatus,
       },
     };
