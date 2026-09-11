@@ -45,37 +45,28 @@ export class TeacherService {
     file?: Express.Multer.File,
     origin?: string,
   ) {
-    // 1. Prevent duplicate teacher profile
-    const existingTeacher = await this.teacherModel.findOne({
-      email: dto.email.toLowerCase(),
-    });
-    if (existingTeacher) {
-      throw new ConflictException(
-        'A teacher profile with this email already exists',
-      );
-    }
-
-    let photo: string | null = null;
-    if (file) {
-      const uploaded = await this.cloudinary.uploadFile(file, 'lms/teachers');
-      photo = uploaded.secure_url;
-    }
-
-    // 2. Determine if self-onboarding (became instructor flow) or explicit invitation
+    // 1. Determine if self-onboarding (became instructor flow) or explicit invitation
     let creatorUser: UserDocument | null = null;
     let isSelfOnboarding = false;
 
     if (dto.user_id) {
       creatorUser = await this.userModel.findById(dto.user_id);
-      if (
-        creatorUser &&
-        creatorUser.email.toLowerCase() === dto.email.toLowerCase()
-      ) {
-        isSelfOnboarding = true;
-      }
+    }
+    if (!creatorUser && dto.email) {
+      creatorUser = await this.userModel.findOne({
+        email: dto.email.toLowerCase(),
+      });
     }
 
-    // 3. Resolve Organisation ID
+    if (
+      creatorUser &&
+      (creatorUser.email.toLowerCase() === dto.email.toLowerCase() ||
+        creatorUser.role === UserRole.INSTRUCTOR)
+    ) {
+      isSelfOnboarding = true;
+    }
+
+    // 2. Resolve Organisation ID
     let finalOrganisationId: Types.ObjectId | null = null;
     if (isSelfOnboarding && creatorUser?.organisationId) {
       finalOrganisationId = creatorUser.organisationId;
@@ -93,6 +84,55 @@ export class TeacherService {
       if (foundOrg) {
         finalOrganisationId = foundOrg._id as Types.ObjectId;
         creatorUser.organisationId = foundOrg._id as Types.ObjectId;
+      }
+    }
+
+    // 3. Photo upload
+    let photo: string | null = null;
+    if (file) {
+      const uploaded = await this.cloudinary.uploadFile(file, 'lms/teachers');
+      photo = uploaded.secure_url;
+    }
+
+    // 4. Check for existing teacher profile
+    const existingTeacher = await this.teacherModel.findOne({
+      email: dto.email.toLowerCase(),
+    });
+
+    if (existingTeacher) {
+      if (isSelfOnboarding && creatorUser) {
+        // Idempotent update for self-onboarding
+        if (photo) existingTeacher.photo = photo;
+        if (dto.First_name) existingTeacher.firstName = dto.First_name;
+        if (dto.Last_name) existingTeacher.lastName = dto.Last_name;
+        if (dto.gender) existingTeacher.gender = dto.gender;
+        if (dto.dob) existingTeacher.dob = dto.dob;
+        if (dto.marital_status) existingTeacher.maritalStatus = dto.marital_status;
+        if (dto.phone_number) existingTeacher.phone = dto.phone_number;
+        if (dto.qualification) existingTeacher.qualification = dto.qualification;
+        if (dto.expert_in) existingTeacher.expertIn = dto.expert_in;
+        if (finalOrganisationId) {
+          existingTeacher.organisationId = finalOrganisationId;
+        }
+        await existingTeacher.save();
+
+        creatorUser.teacherId = existingTeacher._id;
+        if (finalOrganisationId && !creatorUser.organisationId) {
+          creatorUser.organisationId = finalOrganisationId;
+        }
+        creatorUser.onboardingStatus = OnboardingStatus.COMPLETE;
+        await creatorUser.save();
+
+        return {
+          success: true,
+          status: true,
+          message: 'Instructor profile updated successfully',
+          teacher: this.formatTeacherForFrontend(existingTeacher),
+        };
+      } else {
+        throw new ConflictException(
+          'A teacher profile with this email already exists',
+        );
       }
     }
 
