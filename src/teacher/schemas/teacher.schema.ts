@@ -37,6 +37,17 @@ export class Teacher {
 
   @Prop({ type: Types.ObjectId, ref: 'Organisation', default: null })
   organisationId: Types.ObjectId;
+
+  // ── Stripe Connect ─────────────────────────────────────────────────────────
+  @Prop({ type: String, default: null })
+  stripeConnectAccountId: string | null;
+
+  @Prop({
+    type: String,
+    enum: ['pending', 'active', 'restricted', 'disabled'],
+    default: 'pending',
+  })
+  stripeConnectStatus: string;
 }
 
 export const TeacherSchema = SchemaFactory.createForClass(Teacher);

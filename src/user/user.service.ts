@@ -58,7 +58,6 @@ export class UserService {
       email: user.email,
       role: user.role,
       onboardingStatus: user.onboardingStatus,
-      isSubscribed: user.isSubscribed,
     };
     return this.jwtService.sign(payload);
   }
@@ -92,7 +91,6 @@ export class UserService {
         // ── Organisation & instructor linking ─────────────────────────────────
         organization_id: user.organisationId ?? null,
         instructor_id: user.teacherId ?? null,
-        subscription_status: user.isSubscribed,
         preferred_language: (user as any).preferredLanguage || 'en',
       },
     };
@@ -217,17 +215,7 @@ export class UserService {
     );
   }
 
-  async onboardingSubscription(userId: string) {
-    // Bypass: simply mark user as subscribed
-    const user = await this.userModel.findByIdAndUpdate(
-      userId,
-      { isSubscribed: true, onboardingStatus: OnboardingStatus.COMPLETE },
-      { new: true },
-    );
-    if (!user) throw new NotFoundException('User not found');
-    const token = this.generateToken(user);
-    return this.buildUserResponse(user, token, 'Subscription activated');
-  }
+
 
   async forgotPassword(dto: ForgotPasswordDto) {
     const user = await this.userModel.findOne({

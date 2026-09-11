@@ -78,6 +78,10 @@ export class Course {
   @Prop({ type: Number, default: 0 })
   review_count: number;
 
+  // ── Teacher Revenue ─────────────────────────────────────────────────────
+  @Prop({ type: Number, default: null })
+  teacherRevenuePercent: number | null; // null = use org/env default (e.g. 20%)
+
   // ── Ownership ──────────────────────────────────────────────────────────────
   @Prop({ type: Types.ObjectId, ref: 'Organisation', default: null })
   organisation_id: Types.ObjectId | null;

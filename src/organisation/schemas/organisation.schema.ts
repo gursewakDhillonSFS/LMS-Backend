@@ -22,6 +22,21 @@ export class Organisation {
   // Frontend reads: organization_type
   @Prop({ type: String, default: null })
   organization_type: string | null;
+
+  // ── Stripe Connect ─────────────────────────────────────────────────────────
+  @Prop({ type: String, default: null })
+  stripeConnectAccountId: string | null;
+
+  @Prop({
+    type: String,
+    enum: ['pending', 'active', 'restricted', 'disabled'],
+    default: 'pending',
+  })
+  stripeConnectStatus: string;
+
+  // Default teacher revenue share for courses in this org (%)
+  @Prop({ type: Number, default: 20 })
+  defaultTeacherRevenuePercent: number;
 }
 
 export const OrganisationSchema = SchemaFactory.createForClass(Organisation);

@@ -61,8 +61,8 @@ export class User {
   @Prop({ type: [{ type: Types.ObjectId, ref: 'Batch' }], default: [] })
   batchIds: Types.ObjectId[];
 
-  @Prop({ default: false })
-  isSubscribed: boolean;
+  @Prop({ type: String, default: null })
+  stripeCustomerId: string | null;
 
   @Prop({ enum: AuthProvider, default: AuthProvider.LOCAL })
   provider: AuthProvider;

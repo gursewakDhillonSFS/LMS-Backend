@@ -29,7 +29,6 @@ import {
   OnboardingCareerDto,
   OnboardingTopicsDto,
   OnboardingEducationDto,
-  OnboardingSubscriptionDto,
 } from './dto/onboarding.dto';
 import { JwtAuthGuard } from '../auth/jwt-auth.guard';
 import { InstructorOnlyGuard } from '../auth/instructor-only.guard';
@@ -104,11 +103,7 @@ export class UserController {
     return this.userService.onboardingEducation(req.user.userId, dto);
   }
 
-  @UseGuards(JwtAuthGuard)
-  @Post('user-onboarding/subscription')
-  onboardingSubscription(@Request() req) {
-    return this.userService.onboardingSubscription(req.user.userId);
-  }
+
 
   @UseGuards(JwtAuthGuard)
   @Patch('update-profile')

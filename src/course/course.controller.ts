@@ -435,35 +435,8 @@ export class CourseController {
   }
 
   // ─────────────────────────────────────────────────────────────────────────
-  // CART, FAVORITES & PURCHASE ENDPOINTS
+  // FAVORITES ENDPOINTS
   // ─────────────────────────────────────────────────────────────────────────
-
-  @UseGuards(JwtAuthGuard)
-  @Get('add-to-cart')
-  async addToCart(
-    @Query('course_ids') courseId: string,
-    @Req() req: AuthenticatedRequest,
-  ) {
-    const userId = req.user.userId;
-    return this.courseService.addToCart(userId, courseId);
-  }
-
-  @UseGuards(JwtAuthGuard)
-  @Get('add-to-cart/list')
-  async getCartList(@Req() req: AuthenticatedRequest) {
-    const userId = req.user.userId;
-    return this.courseService.getCartList(userId);
-  }
-
-  @UseGuards(JwtAuthGuard)
-  @Delete('remove-from-cart/:course_id')
-  async removeFromCart(
-    @Param('course_id') courseId: string,
-    @Req() req: AuthenticatedRequest,
-  ) {
-    const userId = req.user.userId;
-    return this.courseService.removeFromCart(userId, courseId);
-  }
 
   @UseGuards(JwtAuthGuard)
   @Patch('add-to-favorite')
@@ -480,21 +453,6 @@ export class CourseController {
   async getFavoriteCourses(@Req() req: AuthenticatedRequest) {
     const userId = req.user.userId;
     return this.courseService.getFavoriteCourses(userId);
-  }
-
-
-  @UseGuards(JwtAuthGuard)
-  @Post('course/purchase')
-  async purchaseCourses(
-    @Body() dto: { course_ids: string[]; batch_ids?: string[] },
-    @Req() req: AuthenticatedRequest,
-  ) {
-    const userId = req.user.userId;
-    return this.courseService.purchaseCourses(
-      userId,
-      dto.course_ids,
-      dto.batch_ids,
-    );
   }
 
   @UseGuards(JwtAuthGuard)
