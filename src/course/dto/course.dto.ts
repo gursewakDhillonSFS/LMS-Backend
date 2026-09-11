@@ -78,6 +78,11 @@ export class CreateStep1Dto {
   @ValidateNested({ each: true })
   @Type(() => BatchItemDto)
   batch?: BatchItemDto[];
+
+  @IsOptional()
+  @Transform(({ value }) => (value !== undefined && value !== null && value !== '' ? Number(value) : undefined))
+  @IsNumber()
+  teacher_revenue_percent?: number;
 }
 
 // ── Create Step 2 — Parsed from FormData 'payload' field ──────────────────
@@ -181,6 +186,11 @@ export class UpdateStep1Dto {
   @IsOptional()
   @IsString()
   organisation_id?: string;
+
+  @IsOptional()
+  @Transform(({ value }) => (value !== undefined && value !== null && value !== '' ? Number(value) : undefined))
+  @IsNumber()
+  teacher_revenue_percent?: number;
 }
 
 // ── Update Step 2 — Learning Points ────────────────────────────────────────

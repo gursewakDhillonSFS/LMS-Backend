@@ -268,6 +268,7 @@ export class PaymentService {
         enrolled: false,
         sessionId: session.id,
         url: session.url,
+        session_url: session.url,
         purchaseId: String(purchase._id),
       },
     };
@@ -351,6 +352,63 @@ export class PaymentService {
         : session.payment_intent?.id || null;
     await purchase.save();
 
+    // Fetch course details
+    const course = await this.courseModel.findById(purchase.courseId).lean();
+    const courseName = course?.course_name || 'Course';
+
+    // Execute Stripe Transfers to connected accounts if active
+    let orgTransferId: string | null = null;
+    let teacherTransferId: string | null = null;
+
+    if (this.stripe) {
+      // 1. Transfer to Organisation
+      if (purchase.organisationId && purchase.organisationShareCents > 0) {
+        try {
+          const org = await this.orgModel.findById(purchase.organisationId);
+          if (org?.stripeConnectAccountId && org.stripeConnectStatus === 'active') {
+            const transfer = await this.stripe.transfers.create({
+              amount: purchase.organisationShareCents,
+              currency: 'usd',
+              destination: org.stripeConnectAccountId,
+              description: `Org revenue share for ${courseName}`,
+              metadata: { purchaseId: String(purchase._id) },
+            });
+            orgTransferId = transfer.id;
+            this.logger.log(
+              `Transferred ${purchase.organisationShareCents} cents to org ${org.stripeConnectAccountId} (transfer: ${transfer.id})`,
+            );
+          }
+        } catch (err: any) {
+          this.logger.warn(`Stripe transfer to org failed: ${err.message}`);
+        }
+      }
+
+      // 2. Transfer to Teacher
+      if (purchase.teacherId && purchase.teacherShareCents > 0) {
+        try {
+          const teacher = await this.teacherModel.findById(purchase.teacherId);
+          if (
+            teacher?.stripeConnectAccountId &&
+            teacher.stripeConnectStatus === 'active'
+          ) {
+            const transfer = await this.stripe.transfers.create({
+              amount: purchase.teacherShareCents,
+              currency: 'usd',
+              destination: teacher.stripeConnectAccountId,
+              description: `Teacher revenue share for ${courseName}`,
+              metadata: { purchaseId: String(purchase._id) },
+            });
+            teacherTransferId = transfer.id;
+            this.logger.log(
+              `Transferred ${purchase.teacherShareCents} cents to teacher ${teacher.stripeConnectAccountId} (transfer: ${transfer.id})`,
+            );
+          }
+        } catch (err: any) {
+          this.logger.warn(`Stripe transfer to teacher failed: ${err.message}`);
+        }
+      }
+    }
+
     // Create organisation earning
     await this.orgEarningModel.create({
       organisationId: purchase.organisationId,
@@ -360,6 +418,7 @@ export class PaymentService {
       platformFeeCents: purchase.platformFeeCents,
       earningCents: purchase.organisationShareCents,
       status: 'available',
+      stripeTransferId: orgTransferId,
     });
 
     // Create teacher earning (if applicable)
@@ -371,12 +430,11 @@ export class PaymentService {
         purchaseId: purchase._id,
         earningCents: purchase.teacherShareCents,
         status: 'available',
+        stripeTransferId: teacherTransferId,
       });
     }
 
     // Create financial documents
-    const course = await this.courseModel.findById(purchase.courseId).lean();
-    const courseName = course?.course_name || 'Course';
 
     // Student receipt
     await this.finDocModel.create({

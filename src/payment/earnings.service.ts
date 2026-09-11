@@ -63,21 +63,39 @@ export class EarningsService {
       .reduce((sum, e) => sum + e.grossAmountCents, 0);
     const totalSales = earnings.filter((e) => e.status !== 'reversed').length;
 
-    const items = earnings.map((e) => ({
-      earning_id: String(e._id),
-      course_id: String(e.courseId),
-      course_name: courseMap.get(String(e.courseId))?.course_name || 'Unknown',
-      gross_amount: e.grossAmountCents / 100,
-      platform_fee: e.platformFeeCents / 100,
-      earning: e.earningCents / 100,
-      status: e.status,
-      created_at: (e as any).createdAt,
-    }));
+    const items = earnings.map((e) => {
+      const course = courseMap.get(String(e.courseId));
+      const courseName = course?.course_name || 'Course Sale';
+      return {
+        _id: String(e._id),
+        earning_id: String(e._id),
+        courseId: {
+          _id: String(e.courseId),
+          course_name: courseName,
+        },
+        course_id: String(e.courseId),
+        course_name: courseName,
+        grossAmountCents: e.grossAmountCents,
+        platformFeeCents: e.platformFeeCents,
+        earningCents: e.earningCents,
+        gross_amount: e.grossAmountCents / 100,
+        platform_fee: e.platformFeeCents / 100,
+        earning: e.earningCents / 100,
+        status: e.status,
+        createdAt: (e as any).createdAt,
+        created_at: (e as any).createdAt,
+        stripeTransferId: e.stripeTransferId,
+      };
+    });
 
     return {
       status: true,
       data: {
         summary: {
+          totalEarningsCents: totalEarnings,
+          totalGrossCents: totalGross,
+          totalPlatformFeeCents: totalPlatformFees,
+          totalItems: totalSales,
           total_earnings: totalEarnings / 100,
           total_platform_fees: totalPlatformFees / 100,
           total_gross: totalGross / 100,
@@ -109,19 +127,35 @@ export class EarningsService {
       .reduce((sum, e) => sum + e.earningCents, 0);
     const totalSales = earnings.filter((e) => e.status !== 'reversed').length;
 
-    const items = earnings.map((e) => ({
-      earning_id: String(e._id),
-      course_id: String(e.courseId),
-      course_name: courseMap.get(String(e.courseId))?.course_name || 'Unknown',
-      earning: e.earningCents / 100,
-      status: e.status,
-      created_at: (e as any).createdAt,
-    }));
+    const items = earnings.map((e) => {
+      const course = courseMap.get(String(e.courseId));
+      const courseName = course?.course_name || 'Course Session';
+      return {
+        _id: String(e._id),
+        earning_id: String(e._id),
+        courseId: {
+          _id: String(e.courseId),
+          course_name: courseName,
+        },
+        course_id: String(e.courseId),
+        course_name: courseName,
+        earningCents: e.earningCents,
+        earning: e.earningCents / 100,
+        status: e.status,
+        createdAt: (e as any).createdAt,
+        created_at: (e as any).createdAt,
+        stripeTransferId: e.stripeTransferId,
+      };
+    });
 
     return {
       status: true,
       data: {
         summary: {
+          totalEarningsCents: totalEarnings,
+          totalAvailableCents: totalEarnings,
+          totalPaidCents: 0,
+          totalItems: totalSales,
           total_earnings: totalEarnings / 100,
           total_sales: totalSales,
         },

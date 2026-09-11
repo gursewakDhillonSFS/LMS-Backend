@@ -174,6 +174,7 @@ export class CourseService {
             course_image_url: c.course_image_url,
             course_status: c.course_status,
             course_type: c.course_type,
+            course_price: c.course_price ?? 0,
             course_duration: c.duration,
             course_level: c.course_type,
             course_schedule: c.course_schedule,
@@ -209,7 +210,9 @@ export class CourseService {
       course_id: course._id,
       course_name: courseName,
       course_image_url: course.course_image_url,
-      course_price: course.course_price,
+      course_price: course.course_price ?? 0,
+      teacher_revenue_percent: course.teacherRevenuePercent ?? 20,
+      teacherRevenuePercent: course.teacherRevenuePercent ?? 20,
       course_type: course.course_type,
       course_duration: course.duration,
       course_level: course.course_type, // mapped for frontend compat
@@ -342,6 +345,9 @@ export class CourseService {
       }),
       ...(fields.batch && { batch: fields.batch }),
       ...(orgId && { organisation_id: orgId }),
+      ...(fields.teacher_revenue_percent !== undefined && {
+        teacherRevenuePercent: Number(fields.teacher_revenue_percent),
+      }),
     };
 
     let course: CourseDocument;
@@ -538,6 +544,9 @@ export class CourseService {
         ...(dto.batch && { batch: dto.batch }),
         ...(dto.organisation_id && {
           organisation_id: new Types.ObjectId(dto.organisation_id),
+        }),
+        ...(dto.teacher_revenue_percent !== undefined && {
+          teacherRevenuePercent: Number(dto.teacher_revenue_percent),
         }),
         ...(course_image_url && { course_image_url }),
       },
@@ -827,6 +836,9 @@ export class CourseService {
           course_image_url: c.course_image_url,
           course_status: c.course_status,
           course_type: c.course_type,
+          course_price: c.course_price ?? 0,
+          teacher_revenue_percent: c.teacherRevenuePercent ?? 20,
+          teacherRevenuePercent: c.teacherRevenuePercent ?? 20,
           course_duration: c.duration,
           course_level: c.course_type,
           course_schedule: c.course_schedule,
