@@ -69,8 +69,7 @@ export class TeacherService {
       creatorUser = await this.userModel.findById(dto.user_id);
       if (
         creatorUser &&
-        (creatorUser.email.toLowerCase() === dto.email.toLowerCase() ||
-          creatorUser.onboardingStatus === OnboardingStatus.PENDING)
+        creatorUser.email.toLowerCase() === dto.email.toLowerCase()
       ) {
         isSelfOnboarding = true;
       }

@@ -354,10 +354,13 @@ export class UserService {
 
     if (!updatedUser) throw new NotFoundException('User not found');
 
-    // Sync with the Teacher collection if this user is linked to a teacher profile
+    // Sync with the Teacher collection ONLY if this user has their own matching teacher profile
     if (updatedUser.teacherId) {
       await this.connection.collection('teachers').updateOne(
-        { _id: new Types.ObjectId(String(updatedUser.teacherId)) },
+        {
+          _id: new Types.ObjectId(String(updatedUser.teacherId)),
+          email: updatedUser.email.toLowerCase(),
+        },
         {
           $set: {
             firstName: updatedUser.firstName,
