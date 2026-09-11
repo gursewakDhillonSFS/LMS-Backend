@@ -1,5 +1,5 @@
 import { Prop, Schema, SchemaFactory } from '@nestjs/mongoose';
-import { Document } from 'mongoose';
+import { Document, Types } from 'mongoose';
 
 export type OrganisationDocument = Organisation & Document;
 
@@ -37,6 +37,10 @@ export class Organisation {
   // Default teacher revenue share for courses in this org (%)
   @Prop({ type: Number, default: 20 })
   defaultTeacherRevenuePercent: number;
+
+  // Creator / Owner user ID
+  @Prop({ type: Types.ObjectId, ref: 'User', default: null })
+  creatorUserId: Types.ObjectId | null;
 }
 
 export const OrganisationSchema = SchemaFactory.createForClass(Organisation);

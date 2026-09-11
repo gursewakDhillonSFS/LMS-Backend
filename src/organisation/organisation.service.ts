@@ -1,6 +1,6 @@
 import { Injectable, NotFoundException } from '@nestjs/common';
 import { InjectModel } from '@nestjs/mongoose';
-import { Model } from 'mongoose';
+import { Model, Types } from 'mongoose';
 import {
   Organisation,
   OrganisationDocument,
@@ -48,6 +48,13 @@ export class OrganisationService {
       organization_type: dto.organization_type,
     };
     if (photo_url) updatePayload.photo_url = photo_url; // only overwrite if new photo uploaded
+    if (userId) {
+      try {
+        updatePayload.creatorUserId = new Types.ObjectId(userId);
+      } catch {
+        // invalid objectid string
+      }
+    }
 
     let org: OrganisationDocument;
     let isNew = false;
@@ -88,8 +95,10 @@ export class OrganisationService {
         })) as OrganisationDocument;
         isNew = true;
       }
+    }
 
-      // Link to user if not already linked
+    // Always guarantee user has organisationId linked
+    if (userId && org?._id) {
       await this.userModel.findByIdAndUpdate(userId, {
         organisationId: org._id,
       });

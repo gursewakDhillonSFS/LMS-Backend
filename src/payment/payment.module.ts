@@ -26,6 +26,7 @@ import {
   OrganisationSchema,
 } from '../organisation/schemas/organisation.schema';
 import { Teacher, TeacherSchema } from '../teacher/schemas/teacher.schema';
+import { User, UserSchema } from '../user/schemas/user.schema';
 import { CourseModule } from '../course/course.module';
 import { AuthModule } from '../auth/auth.module';
 
@@ -39,6 +40,7 @@ import { AuthModule } from '../auth/auth.module';
       { name: Course.name, schema: CourseSchema },
       { name: Organisation.name, schema: OrganisationSchema },
       { name: Teacher.name, schema: TeacherSchema },
+      { name: User.name, schema: UserSchema },
     ]),
     CourseModule,
     AuthModule,

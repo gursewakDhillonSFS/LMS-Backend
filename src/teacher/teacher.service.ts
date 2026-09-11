@@ -83,6 +83,18 @@ export class TeacherService {
     } else if (creatorUser?.organisationId) {
       // The creator is an instructor inviting a teacher into their organization
       finalOrganisationId = creatorUser.organisationId;
+    } else if (creatorUser) {
+      // Fallback: search organisation by creatorUserId or user's email
+      const foundOrg = await this.orgModel.findOne({
+        $or: [
+          { creatorUserId: creatorUser._id },
+          { email: creatorUser.email.toLowerCase() },
+        ],
+      });
+      if (foundOrg) {
+        finalOrganisationId = foundOrg._id as Types.ObjectId;
+        creatorUser.organisationId = foundOrg._id as Types.ObjectId;
+      }
     }
 
     // 4. Create the Teacher record
@@ -107,6 +119,9 @@ export class TeacherService {
     if (isSelfOnboarding && creatorUser) {
       // Link existing user during onboarding
       creatorUser.teacherId = teacher._id;
+      if (finalOrganisationId && !creatorUser.organisationId) {
+        creatorUser.organisationId = finalOrganisationId;
+      }
       creatorUser.onboardingStatus = OnboardingStatus.COMPLETE;
       await creatorUser.save();
       targetUserId = String(creatorUser._id);

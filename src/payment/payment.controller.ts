@@ -17,6 +17,14 @@ import { EarningsService } from './earnings.service';
 import { PurchaseCourseDto, RefundPurchaseDto } from './dto/payment.dto';
 import { JwtAuthGuard } from '../auth/jwt-auth.guard';
 import type { AuthenticatedRequest } from '../common/interfaces/auth-request.interface';
+import { InjectModel } from '@nestjs/mongoose';
+import { Model, Types } from 'mongoose';
+import { User, UserDocument } from '../user/schemas/user.schema';
+import {
+  Organisation,
+  OrganisationDocument,
+} from '../organisation/schemas/organisation.schema';
+import { Teacher, TeacherDocument } from '../teacher/schemas/teacher.schema';
 
 @Controller('auth/course/v1')
 export class PaymentController {
@@ -24,6 +32,11 @@ export class PaymentController {
     private readonly paymentService: PaymentService,
     private readonly stripeConnectService: StripeConnectService,
     private readonly earningsService: EarningsService,
+    @InjectModel(User.name) private readonly userModel: Model<UserDocument>,
+    @InjectModel(Organisation.name)
+    private readonly orgModel: Model<OrganisationDocument>,
+    @InjectModel(Teacher.name)
+    private readonly teacherModel: Model<TeacherDocument>,
   ) {}
 
   // ─────────────────────────────────────────────────────────────────────────────
@@ -96,14 +109,165 @@ export class PaymentController {
   }
 
   // ─────────────────────────────────────────────────────────────────────────────
+  // ─── HELPER RESOLVERS ────────────────────────────────────────────────────────
+  private async resolveOrganisationId(
+    req: AuthenticatedRequest,
+    explicitOrgId?: string,
+  ): Promise<string | null> {
+    // 1. Explicit ID passed in query or body
+    if (explicitOrgId && Types.ObjectId.isValid(explicitOrgId)) {
+      return String(explicitOrgId);
+    }
+    // 2. Already on request user object (e.g. from JwtStrategy)
+    if (req.user?.organisationId && Types.ObjectId.isValid(req.user.organisationId)) {
+      return String(req.user.organisationId);
+    }
+
+    const userId = req.user?.userId;
+    const email = req.user?.email?.toLowerCase();
+
+    // 3. Check User record in DB
+    let user: UserDocument | null = null;
+    if (userId && Types.ObjectId.isValid(userId)) {
+      user = await this.userModel.findById(userId);
+    } else if (email) {
+      user = await this.userModel.findOne({ email });
+    }
+
+    if (user?.organisationId) {
+      return String(user.organisationId);
+    }
+
+    // 4. Check Teacher record in DB
+    let teacher: TeacherDocument | null = null;
+    if (user?.teacherId) {
+      teacher = await this.teacherModel.findById(user.teacherId);
+    } else if (email) {
+      teacher = await this.teacherModel.findOne({ email });
+    }
+
+    if (teacher?.organisationId) {
+      if (user) {
+        await this.userModel.findByIdAndUpdate(user._id, {
+          organisationId: teacher.organisationId,
+        });
+      }
+      return String(teacher.organisationId);
+    }
+
+    // 5. Search Organisation by creatorUserId
+    if (user?._id) {
+      const orgByCreator = await this.orgModel.findOne({
+        creatorUserId: user._id,
+      });
+      if (orgByCreator) {
+        await this.userModel.findByIdAndUpdate(user._id, {
+          organisationId: orgByCreator._id,
+        });
+        if (teacher?._id && !teacher.organisationId) {
+          await this.teacherModel.findByIdAndUpdate(teacher._id, {
+            organisationId: orgByCreator._id,
+          });
+        }
+        return String(orgByCreator._id);
+      }
+    }
+
+    // 6. Search Organisation by user email
+    if (email) {
+      const orgByEmail = await this.orgModel.findOne({ email });
+      if (orgByEmail) {
+        if (user) {
+          await this.userModel.findByIdAndUpdate(user._id, {
+            organisationId: orgByEmail._id,
+          });
+        }
+        if (teacher?._id && !teacher.organisationId) {
+          await this.teacherModel.findByIdAndUpdate(teacher._id, {
+            organisationId: orgByEmail._id,
+          });
+        }
+        return String(orgByEmail._id);
+      }
+    }
+
+    // 7. Search Organisation by teacher reference
+    if (teacher?._id) {
+      const orgWithTeacher = await this.orgModel.findOne({
+        teachers: teacher._id,
+      });
+      if (orgWithTeacher) {
+        if (user) {
+          await this.userModel.findByIdAndUpdate(user._id, {
+            organisationId: orgWithTeacher._id,
+          });
+        }
+        return String(orgWithTeacher._id);
+      }
+    }
+
+    return null;
+  }
+
+  private async resolveTeacherId(
+    req: AuthenticatedRequest,
+    explicitTeacherId?: string,
+  ): Promise<string | null> {
+    if (explicitTeacherId && Types.ObjectId.isValid(explicitTeacherId)) {
+      return String(explicitTeacherId);
+    }
+    if (req.user?.teacherId && Types.ObjectId.isValid(req.user.teacherId)) {
+      return String(req.user.teacherId);
+    }
+
+    const userId = req.user?.userId;
+    const email = req.user?.email?.toLowerCase();
+
+    // 1. Check User in DB
+    let user: UserDocument | null = null;
+    if (userId && Types.ObjectId.isValid(userId)) {
+      user = await this.userModel.findById(userId);
+    } else if (email) {
+      user = await this.userModel.findOne({ email });
+    }
+
+    if (user?.teacherId) {
+      return String(user.teacherId);
+    }
+
+    // 2. Check Teacher by email
+    if (email) {
+      const teacher = await this.teacherModel.findOne({ email });
+      if (teacher) {
+        if (user) {
+          await this.userModel.findByIdAndUpdate(user._id, {
+            teacherId: teacher._id,
+          });
+        }
+        return String(teacher._id);
+      }
+    }
+
+    return null;
+  }
+
+  // ─────────────────────────────────────────────────────────────────────────────
   // STRIPE CONNECT — ORGANISATION
   // ─────────────────────────────────────────────────────────────────────────────
 
   @UseGuards(JwtAuthGuard)
   @Post('stripe/connect/organisation')
-  createOrgConnect(@Req() req: AuthenticatedRequest) {
-    // Get org from the instructor's profile
-    const orgId = req.user.organisationId;
+  async createOrgConnect(
+    @Req() req: AuthenticatedRequest,
+    @Body('organisationId') bodyOrgId?: string,
+    @Body('organization_id') bodyOrgId2?: string,
+    @Query('organisationId') queryOrgId?: string,
+    @Query('organization_id') queryOrgId2?: string,
+  ) {
+    const orgId = await this.resolveOrganisationId(
+      req,
+      bodyOrgId || bodyOrgId2 || queryOrgId || queryOrgId2,
+    );
     if (!orgId) {
       return {
         status: false,
@@ -115,8 +279,15 @@ export class PaymentController {
 
   @UseGuards(JwtAuthGuard)
   @Get('stripe/connect/organisation/status')
-  getOrgConnectStatus(@Req() req: AuthenticatedRequest) {
-    const orgId = req.user.organisationId;
+  async getOrgConnectStatus(
+    @Req() req: AuthenticatedRequest,
+    @Query('organisationId') queryOrgId?: string,
+    @Query('organization_id') queryOrgId2?: string,
+  ) {
+    const orgId = await this.resolveOrganisationId(
+      req,
+      queryOrgId || queryOrgId2,
+    );
     if (!orgId) {
       return {
         status: true,
@@ -132,8 +303,17 @@ export class PaymentController {
 
   @UseGuards(JwtAuthGuard)
   @Post('stripe/connect/teacher')
-  createTeacherConnect(@Req() req: AuthenticatedRequest) {
-    const teacherId = req.user.teacherId;
+  async createTeacherConnect(
+    @Req() req: AuthenticatedRequest,
+    @Body('teacherId') bodyTeacherId?: string,
+    @Body('instructor_id') bodyTeacherId2?: string,
+    @Query('teacherId') queryTeacherId?: string,
+    @Query('instructor_id') queryTeacherId2?: string,
+  ) {
+    const teacherId = await this.resolveTeacherId(
+      req,
+      bodyTeacherId || bodyTeacherId2 || queryTeacherId || queryTeacherId2,
+    );
     if (!teacherId) {
       return { status: false, message: 'No teacher profile linked' };
     }
@@ -142,8 +322,15 @@ export class PaymentController {
 
   @UseGuards(JwtAuthGuard)
   @Get('stripe/connect/teacher/status')
-  getTeacherConnectStatus(@Req() req: AuthenticatedRequest) {
-    const teacherId = req.user.teacherId;
+  async getTeacherConnectStatus(
+    @Req() req: AuthenticatedRequest,
+    @Query('teacherId') queryTeacherId?: string,
+    @Query('instructor_id') queryTeacherId2?: string,
+  ) {
+    const teacherId = await this.resolveTeacherId(
+      req,
+      queryTeacherId || queryTeacherId2,
+    );
     if (!teacherId) {
       return {
         status: true,
@@ -159,8 +346,15 @@ export class PaymentController {
 
   @UseGuards(JwtAuthGuard)
   @Get('earnings/organisation')
-  getOrgEarnings(@Req() req: AuthenticatedRequest) {
-    const orgId = req.user.organisationId;
+  async getOrgEarnings(
+    @Req() req: AuthenticatedRequest,
+    @Query('organisationId') queryOrgId?: string,
+    @Query('organization_id') queryOrgId2?: string,
+  ) {
+    const orgId = await this.resolveOrganisationId(
+      req,
+      queryOrgId || queryOrgId2,
+    );
     if (!orgId) {
       return { status: true, data: { summary: {}, items: [] } };
     }
@@ -173,8 +367,15 @@ export class PaymentController {
 
   @UseGuards(JwtAuthGuard)
   @Get('earnings/teacher')
-  getTeacherEarnings(@Req() req: AuthenticatedRequest) {
-    const teacherId = req.user.teacherId;
+  async getTeacherEarnings(
+    @Req() req: AuthenticatedRequest,
+    @Query('teacherId') queryTeacherId?: string,
+    @Query('instructor_id') queryTeacherId2?: string,
+  ) {
+    const teacherId = await this.resolveTeacherId(
+      req,
+      queryTeacherId || queryTeacherId2,
+    );
     if (!teacherId) {
       return { status: true, data: { summary: {}, items: [] } };
     }
