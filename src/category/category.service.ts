@@ -57,11 +57,11 @@ export class CategoryService implements OnModuleInit {
       status: true,
       message: 'Categories fetched successfully',
       data: categories.map((cat) => ({
-        category_id: cat._id,
+        category_id: String(cat._id),
         category_name: cat.category_name,
         name: cat.category_name,
         label: cat.category_name,
-        value: cat.category_name,
+        value: String(cat._id),
         description: cat.description,
       })),
     };

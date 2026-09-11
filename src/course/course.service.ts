@@ -297,25 +297,43 @@ export class CourseService {
     const { course_id, ...fields } = dto;
 
     let orgId: Types.ObjectId | null = null;
-    if (fields.organisation_id) {
+    if (fields.organisation_id && Types.ObjectId.isValid(fields.organisation_id)) {
       orgId = new Types.ObjectId(fields.organisation_id);
+    }
+
+    let headTeacherId: Types.ObjectId | null = null;
+    if (fields.head_teacher && Types.ObjectId.isValid(fields.head_teacher)) {
+      headTeacherId = new Types.ObjectId(fields.head_teacher);
+    }
+
+    let categoryId: Types.ObjectId | null = null;
+    if (fields.category_id) {
+      if (Types.ObjectId.isValid(fields.category_id)) {
+        categoryId = new Types.ObjectId(fields.category_id);
+      } else {
+        // Fallback: look up category by name
+        const cat = await this.categoryModel.findOne({
+          category_name: {
+            $regex: new RegExp(`^${fields.category_id.trim()}$`, 'i'),
+          },
+        });
+        if (cat) {
+          categoryId = cat._id as Types.ObjectId;
+        }
+      }
     }
 
     // Build update payload
     const payload: Record<string, unknown> = {
       course_name: fields.course_name,
-      ...(fields.head_teacher && {
-        head_teacher: new Types.ObjectId(fields.head_teacher),
-      }),
+      ...(headTeacherId && { head_teacher: headTeacherId }),
       ...(fields.duration && { duration: fields.duration }),
       ...(fields.course_type && { course_type: fields.course_type }),
       ...(fields.course_price !== undefined && {
         course_price: Number(fields.course_price),
       }),
       ...(fields.demo_class !== undefined && { demo_class: fields.demo_class }),
-      ...(fields.category_id && {
-        category_id: new Types.ObjectId(fields.category_id),
-      }),
+      ...(categoryId && { category_id: categoryId }),
       ...(fields.course_schedule && {
         course_schedule: fields.course_schedule,
       }),
@@ -327,27 +345,42 @@ export class CourseService {
     };
 
     let course: CourseDocument;
+    const isUpsert = Boolean(course_id && Types.ObjectId.isValid(course_id));
 
-    if (course_id) {
+    if (isUpsert) {
       // ── Upsert: user went back and resubmitted ──────────────────────────
       const existing = await this.courseModel.findById(course_id);
-      if (!existing) throw new NotFoundException('Course not found');
+      if (existing) {
+        if (payload.batch && existing.batch) {
+          payload.batch = (payload.batch as any[]).map((newBatch) => {
+            const existingBatch = existing.batch.find(
+              (b) => b.batchName === newBatch.batchName,
+            );
+            if (existingBatch && existingBatch._id) {
+              return { ...newBatch, _id: existingBatch._id };
+            }
+            return newBatch;
+          });
+        }
 
-      if (payload.batch && existing.batch) {
-        payload.batch = (payload.batch as any[]).map(newBatch => {
-          const existingBatch = existing.batch.find(b => b.batchName === newBatch.batchName);
-          if (existingBatch && existingBatch._id) {
-            return { ...newBatch, _id: existingBatch._id };
-          }
-          return newBatch;
+        course = (await this.courseModel.findByIdAndUpdate(
+          course_id,
+          { $set: payload },
+          { new: true },
+        )) as CourseDocument;
+      } else {
+        const user = await this.userModel.findById(userId).lean();
+        if (!orgId && user?.organisationId) {
+          orgId = new Types.ObjectId(String(user.organisationId));
+        }
+
+        course = await this.courseModel.create({
+          ...payload,
+          created_by: new Types.ObjectId(userId),
+          organisation_id: orgId || null,
+          course_status: 'draft',
         });
       }
-
-      course = (await this.courseModel.findByIdAndUpdate(
-        course_id,
-        { $set: payload },
-        { new: true },
-      )) as CourseDocument;
     } else {
       // ── Create new draft ─────────────────────────────────────────────────
       const user = await this.userModel.findById(userId).lean();

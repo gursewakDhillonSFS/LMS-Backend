@@ -25,10 +25,12 @@ export class BatchItemDto {
 //   course_price, demo_class, category_id, course_schedule, live_classes, batch? }
 export class CreateStep1Dto {
   @IsOptional()
+  @Transform(({ value }) => (!value || value === 'null' ? undefined : String(value)))
   @IsString()
   course_id?: string; // present → upsert; absent → create new
 
   @IsOptional()
+  @Transform(({ value }) => (!value || value === 'null' ? undefined : String(value)))
   @IsString()
   organisation_id?: string;
 
@@ -37,6 +39,7 @@ export class CreateStep1Dto {
   course_name: string;
 
   @IsOptional()
+  @Transform(({ value }) => (!value || value === 'null' ? undefined : String(value)))
   @IsString()
   head_teacher?: string;
 
@@ -58,6 +61,7 @@ export class CreateStep1Dto {
   demo_class?: boolean;
 
   @IsOptional()
+  @Transform(({ value }) => (!value || value === 'null' ? undefined : String(value)))
   @IsString()
   category_id?: string;
 
