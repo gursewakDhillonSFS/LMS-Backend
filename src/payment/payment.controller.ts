@@ -297,6 +297,28 @@ export class PaymentController {
     return this.stripeConnectService.getOrgConnectStatus(orgId);
   }
 
+  @UseGuards(JwtAuthGuard)
+  @Post('stripe/connect/organisation/dashboard')
+  async getOrgDashboard(
+    @Req() req: AuthenticatedRequest,
+    @Body('organisationId') bodyOrgId?: string,
+    @Body('organization_id') bodyOrgId2?: string,
+    @Query('organisationId') queryOrgId?: string,
+    @Query('organization_id') queryOrgId2?: string,
+  ) {
+    const orgId = await this.resolveOrganisationId(
+      req,
+      bodyOrgId || bodyOrgId2 || queryOrgId || queryOrgId2,
+    );
+    if (!orgId) {
+      return {
+        status: false,
+        message: 'No organisation linked to your account',
+      };
+    }
+    return this.stripeConnectService.getOrgDashboardLink(orgId);
+  }
+
   // ─────────────────────────────────────────────────────────────────────────────
   // STRIPE CONNECT — TEACHER
   // ─────────────────────────────────────────────────────────────────────────────
@@ -338,6 +360,25 @@ export class PaymentController {
       };
     }
     return this.stripeConnectService.getTeacherConnectStatus(teacherId);
+  }
+
+  @UseGuards(JwtAuthGuard)
+  @Post('stripe/connect/teacher/dashboard')
+  async getTeacherDashboard(
+    @Req() req: AuthenticatedRequest,
+    @Body('teacherId') bodyTeacherId?: string,
+    @Body('instructor_id') bodyTeacherId2?: string,
+    @Query('teacherId') queryTeacherId?: string,
+    @Query('instructor_id') queryTeacherId2?: string,
+  ) {
+    const teacherId = await this.resolveTeacherId(
+      req,
+      bodyTeacherId || bodyTeacherId2 || queryTeacherId || queryTeacherId2,
+    );
+    if (!teacherId) {
+      return { status: false, message: 'No teacher profile linked' };
+    }
+    return this.stripeConnectService.getTeacherDashboardLink(teacherId);
   }
 
   // ─────────────────────────────────────────────────────────────────────────────

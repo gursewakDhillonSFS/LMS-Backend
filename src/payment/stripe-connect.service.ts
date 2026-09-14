@@ -47,11 +47,7 @@ export class StripeConnectService {
     if (!org) throw new NotFoundException('Organisation not found');
 
     if (org.stripeConnectAccountId && org.stripeConnectStatus === 'active') {
-      return {
-        status: true,
-        message: 'Stripe Connect already active',
-        data: { connect_status: org.stripeConnectStatus },
-      };
+      return this.getOrgDashboardLink(orgId);
     }
 
     let accountId = org.stripeConnectAccountId;
@@ -94,6 +90,52 @@ export class StripeConnectService {
         connect_status: org.stripeConnectStatus,
       },
     };
+  }
+
+  async getOrgDashboardLink(orgId: string) {
+    const org = await this.orgModel.findById(orgId);
+    if (!org) throw new NotFoundException('Organisation not found');
+
+    if (!org.stripeConnectAccountId) {
+      return this.createOrgConnectAccount(orgId);
+    }
+
+    const frontendUrl =
+      this.config.get<string>('FRONTEND_URL') || 'http://localhost:3000';
+
+    try {
+      const loginLink = await this.getStripe().accounts.createLoginLink(
+        org.stripeConnectAccountId,
+      );
+      return {
+        status: true,
+        message: 'Stripe Express dashboard link created',
+        url: loginLink.url,
+        data: {
+          url: loginLink.url,
+          connect_status: org.stripeConnectStatus,
+        },
+      };
+    } catch (err: any) {
+      this.logger.warn(
+        `Failed to create login link for org ${orgId}, generating account link fallback: ${err?.message}`,
+      );
+      const accountLink = await this.getStripe().accountLinks.create({
+        account: org.stripeConnectAccountId,
+        refresh_url: `${frontendUrl}/earnings?refresh=true`,
+        return_url: `${frontendUrl}/earnings?success=true`,
+        type: 'account_onboarding',
+      });
+      return {
+        status: true,
+        message: 'Stripe onboarding link created',
+        url: accountLink.url,
+        data: {
+          url: accountLink.url,
+          connect_status: org.stripeConnectStatus,
+        },
+      };
+    }
   }
 
   async getOrgConnectStatus(orgId: string) {
@@ -159,11 +201,7 @@ export class StripeConnectService {
       teacher.stripeConnectAccountId &&
       teacher.stripeConnectStatus === 'active'
     ) {
-      return {
-        status: true,
-        message: 'Stripe Connect already active',
-        data: { connect_status: teacher.stripeConnectStatus },
-      };
+      return this.getTeacherDashboardLink(teacherId);
     }
 
     let accountId = teacher.stripeConnectAccountId;
@@ -209,6 +247,52 @@ export class StripeConnectService {
         connect_status: teacher.stripeConnectStatus,
       },
     };
+  }
+
+  async getTeacherDashboardLink(teacherId: string) {
+    const teacher = await this.teacherModel.findById(teacherId);
+    if (!teacher) throw new NotFoundException('Teacher not found');
+
+    if (!teacher.stripeConnectAccountId) {
+      return this.createTeacherConnectAccount(teacherId);
+    }
+
+    const frontendUrl =
+      this.config.get<string>('FRONTEND_URL') || 'http://localhost:3000';
+
+    try {
+      const loginLink = await this.getStripe().accounts.createLoginLink(
+        teacher.stripeConnectAccountId,
+      );
+      return {
+        status: true,
+        message: 'Stripe Express dashboard link created',
+        url: loginLink.url,
+        data: {
+          url: loginLink.url,
+          connect_status: teacher.stripeConnectStatus,
+        },
+      };
+    } catch (err: any) {
+      this.logger.warn(
+        `Failed to create login link for teacher ${teacherId}, generating account link fallback: ${err?.message}`,
+      );
+      const accountLink = await this.getStripe().accountLinks.create({
+        account: teacher.stripeConnectAccountId,
+        refresh_url: `${frontendUrl}/teacher/earnings?refresh=true`,
+        return_url: `${frontendUrl}/teacher/earnings?success=true`,
+        type: 'account_onboarding',
+      });
+      return {
+        status: true,
+        message: 'Stripe onboarding link created',
+        url: accountLink.url,
+        data: {
+          url: accountLink.url,
+          connect_status: teacher.stripeConnectStatus,
+        },
+      };
+    }
   }
 
   async getTeacherConnectStatus(teacherId: string) {
