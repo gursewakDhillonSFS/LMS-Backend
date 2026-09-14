@@ -73,7 +73,7 @@ export class PaymentService {
     );
   }
 
-  private getStripe(): Stripe {
+  public getStripe(): Stripe {
     if (!this.stripe) {
       throw new BadRequestException(
         'Stripe is not configured. Set STRIPE_SECRET_KEY.',
@@ -358,7 +358,14 @@ export class PaymentService {
 
     // Execute Stripe Transfers to connected accounts if active
     let orgTransferId: string | null = null;
+    let orgStatus: string = 'pending';
+    let orgFailureReason: string | null = null;
+    let orgTransferredAt: Date | null = null;
+
     let teacherTransferId: string | null = null;
+    let teacherStatus: string = 'pending';
+    let teacherFailureReason: string | null = null;
+    let teacherTransferredAt: Date | null = null;
 
     if (this.stripe) {
       // 1. Transfer to Organisation
@@ -374,12 +381,22 @@ export class PaymentService {
               metadata: { purchaseId: String(purchase._id) },
             });
             orgTransferId = transfer.id;
+            orgStatus = 'paid';
+            orgTransferredAt = new Date();
             this.logger.log(
               `Transferred ${purchase.organisationShareCents} cents to org ${org.stripeConnectAccountId} (transfer: ${transfer.id})`,
             );
+          } else {
+            orgStatus = 'action_required';
+            orgFailureReason = 'Stripe account setup required';
           }
         } catch (err: any) {
-          this.logger.warn(`Stripe transfer to org failed: ${err.message}`);
+          orgStatus = 'pending';
+          orgFailureReason =
+            err.code === 'balance_insufficient'
+              ? 'Awaiting funds settlement'
+              : err.message || 'Transfer pending';
+          this.logger.warn(`Stripe transfer to org queued/delayed: ${err.message}`);
         }
       }
 
@@ -399,12 +416,22 @@ export class PaymentService {
               metadata: { purchaseId: String(purchase._id) },
             });
             teacherTransferId = transfer.id;
+            teacherStatus = 'paid';
+            teacherTransferredAt = new Date();
             this.logger.log(
               `Transferred ${purchase.teacherShareCents} cents to teacher ${teacher.stripeConnectAccountId} (transfer: ${transfer.id})`,
             );
+          } else {
+            teacherStatus = 'action_required';
+            teacherFailureReason = 'Stripe account setup required';
           }
         } catch (err: any) {
-          this.logger.warn(`Stripe transfer to teacher failed: ${err.message}`);
+          teacherStatus = 'pending';
+          teacherFailureReason =
+            err.code === 'balance_insufficient'
+              ? 'Awaiting funds settlement'
+              : err.message || 'Transfer pending';
+          this.logger.warn(`Stripe transfer to teacher queued/delayed: ${err.message}`);
         }
       }
     }
@@ -417,8 +444,10 @@ export class PaymentService {
       grossAmountCents: purchase.grossAmountCents,
       platformFeeCents: purchase.platformFeeCents,
       earningCents: purchase.organisationShareCents,
-      status: 'available',
+      status: orgStatus,
       stripeTransferId: orgTransferId,
+      transferredAt: orgTransferredAt,
+      failureReason: orgFailureReason,
     });
 
     // Create teacher earning (if applicable)
@@ -429,8 +458,10 @@ export class PaymentService {
         courseId: purchase.courseId,
         purchaseId: purchase._id,
         earningCents: purchase.teacherShareCents,
-        status: 'available',
+        status: teacherStatus,
         stripeTransferId: teacherTransferId,
+        transferredAt: teacherTransferredAt,
+        failureReason: teacherFailureReason,
       });
     }
 

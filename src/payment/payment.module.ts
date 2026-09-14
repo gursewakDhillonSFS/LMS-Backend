@@ -4,6 +4,7 @@ import { PaymentController } from './payment.controller';
 import { PaymentService } from './payment.service';
 import { StripeConnectService } from './stripe-connect.service';
 import { EarningsService } from './earnings.service';
+import { PayoutRetryService } from './payout-retry.service';
 import {
   CoursePurchase,
   CoursePurchaseSchema,
@@ -46,7 +47,17 @@ import { AuthModule } from '../auth/auth.module';
     AuthModule,
   ],
   controllers: [PaymentController],
-  providers: [PaymentService, StripeConnectService, EarningsService],
-  exports: [PaymentService, StripeConnectService, EarningsService],
+  providers: [
+    PaymentService,
+    StripeConnectService,
+    EarningsService,
+    PayoutRetryService,
+  ],
+  exports: [
+    PaymentService,
+    StripeConnectService,
+    EarningsService,
+    PayoutRetryService,
+  ],
 })
 export class PaymentModule {}

@@ -26,12 +26,15 @@ import {
 } from '../organisation/schemas/organisation.schema';
 import { Teacher, TeacherDocument } from '../teacher/schemas/teacher.schema';
 
+import { PayoutRetryService } from './payout-retry.service';
+
 @Controller('auth/course/v1')
 export class PaymentController {
   constructor(
     private readonly paymentService: PaymentService,
     private readonly stripeConnectService: StripeConnectService,
     private readonly earningsService: EarningsService,
+    private readonly payoutRetryService: PayoutRetryService,
     @InjectModel(User.name) private readonly userModel: Model<UserDocument>,
     @InjectModel(Organisation.name)
     private readonly orgModel: Model<OrganisationDocument>,
@@ -445,4 +448,57 @@ export class PaymentController {
   ) {
     return this.paymentService.refundPurchase(purchaseId, dto);
   }
+
+  // ─────────────────────────────────────────────────────────────────────────────
+  // PAYOUT SYNC & RETRIES (ON-DEMAND)
+  // ─────────────────────────────────────────────────────────────────────────────
+
+  @UseGuards(JwtAuthGuard)
+  @Post('stripe/connect/teacher/sync-payouts')
+  async syncTeacherPayouts(
+    @Req() req: AuthenticatedRequest,
+    @Body('teacherId') bodyTeacherId?: string,
+    @Query('teacherId') queryTeacherId?: string,
+  ) {
+    const teacherId = await this.resolveTeacherId(
+      req,
+      bodyTeacherId || queryTeacherId,
+    );
+    if (!teacherId) {
+      return { status: false, message: 'No teacher profile linked' };
+    }
+    const result =
+      await this.payoutRetryService.retryTeacherPendingPayouts(teacherId);
+    return { status: true, data: result, message: result.message };
+  }
+
+  @UseGuards(JwtAuthGuard)
+  @Post('stripe/connect/organisation/sync-payouts')
+  async syncOrgPayouts(
+    @Req() req: AuthenticatedRequest,
+    @Body('organisationId') bodyOrgId?: string,
+    @Query('organisationId') queryOrgId?: string,
+  ) {
+    const orgId = await this.resolveOrganisationId(
+      req,
+      bodyOrgId || queryOrgId,
+    );
+    if (!orgId) {
+      return { status: false, message: 'No organisation profile linked' };
+    }
+    const result = await this.payoutRetryService.retryOrgPendingPayouts(orgId);
+    return { status: true, data: result, message: result.message };
+  }
+
+  @UseGuards(JwtAuthGuard)
+  @Post('payment/admin/payouts/retry')
+  async retryAdminPayouts() {
+    const result = await this.payoutRetryService.retryAllPendingPayouts();
+    return {
+      status: true,
+      data: result,
+      message: `Processed ${result.teachersProcessed} teacher(s), ${result.orgsProcessed} organisation(s). Total transferred: $${(result.totalTransferredCents / 100).toFixed(2)} USD`,
+    };
+  }
 }
+

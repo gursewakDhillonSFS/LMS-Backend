@@ -85,6 +85,8 @@ export class EarningsService {
         createdAt: (e as any).createdAt,
         created_at: (e as any).createdAt,
         stripeTransferId: e.stripeTransferId,
+        transferredAt: (e as any).transferredAt,
+        failureReason: (e as any).failureReason,
       };
     });
 
@@ -145,6 +147,8 @@ export class EarningsService {
         createdAt: (e as any).createdAt,
         created_at: (e as any).createdAt,
         stripeTransferId: e.stripeTransferId,
+        transferredAt: (e as any).transferredAt,
+        failureReason: (e as any).failureReason,
       };
     });
 

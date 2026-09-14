@@ -28,13 +28,19 @@ export class OrganisationEarning {
 
   @Prop({
     type: String,
-    enum: ['pending', 'available', 'processing', 'paid', 'reversed'],
+    enum: ['pending', 'available', 'processing', 'paid', 'action_required', 'reversed'],
     default: 'pending',
   })
   status: string;
 
   @Prop({ type: String, default: null })
   stripeTransferId: string | null;
+
+  @Prop({ type: Date, default: null })
+  transferredAt: Date | null;
+
+  @Prop({ type: String, default: null })
+  failureReason: string | null;
 }
 
 export const OrganisationEarningSchema =
