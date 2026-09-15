@@ -1012,6 +1012,16 @@ export class CourseService {
     const lesson = await this.lessonModel.findById(dto.lesson_id);
     if (!lesson) throw new NotFoundException('Lesson not found');
 
+    // Clean up removed files from Cloudinary
+    if (dto.existing_files && lesson.studyMaterials && lesson.studyMaterials.length > 0) {
+      const retainedUrls = new Set(dto.existing_files.map((f) => f.file_url));
+      for (const mat of lesson.studyMaterials) {
+        if (mat.file_url && !retainedUrls.has(mat.file_url)) {
+          this.cloudinary.deleteByUrl(mat.file_url);
+        }
+      }
+    }
+
     const studyMaterials = dto.existing_files ? [...dto.existing_files] : (lesson.studyMaterials ? [...lesson.studyMaterials] : []);
 
     if (files && files.length > 0) {
@@ -1046,10 +1056,29 @@ export class CourseService {
   }
 
   async deleteLesson(lessonId: string) {
-    const lesson = await this.lessonModel.findByIdAndDelete(lessonId);
+    const lesson = await this.lessonModel.findById(lessonId);
     if (!lesson) throw new NotFoundException('Lesson not found');
 
-    // Cascade delete sublessons
+    // Clean up lesson study materials from Cloudinary
+    if (lesson.studyMaterials && lesson.studyMaterials.length > 0) {
+      for (const mat of lesson.studyMaterials) {
+        if (mat.file_url) this.cloudinary.deleteByUrl(mat.file_url);
+      }
+    }
+
+    // Cascade delete sublessons and clean up their files
+    const sublessons = await this.subLessonModel.find({
+      lesson_id: new Types.ObjectId(lessonId),
+    });
+    for (const sub of sublessons) {
+      if (sub.studyMaterials && sub.studyMaterials.length > 0) {
+        for (const mat of sub.studyMaterials) {
+          if (mat.file_url) this.cloudinary.deleteByUrl(mat.file_url);
+        }
+      }
+    }
+
+    await this.lessonModel.findByIdAndDelete(lessonId);
     await this.subLessonModel.deleteMany({
       lesson_id: new Types.ObjectId(lessonId),
     });
@@ -1195,6 +1224,16 @@ export class CourseService {
     const sub = await this.subLessonModel.findById(dto.sublesson_id);
     if (!sub) throw new NotFoundException('Sub-lesson not found');
 
+    // Clean up removed files from Cloudinary
+    if (dto.existing_files && sub.studyMaterials && sub.studyMaterials.length > 0) {
+      const retainedUrls = new Set(dto.existing_files.map((f) => f.file_url));
+      for (const mat of sub.studyMaterials) {
+        if (mat.file_url && !retainedUrls.has(mat.file_url)) {
+          this.cloudinary.deleteByUrl(mat.file_url);
+        }
+      }
+    }
+
     const studyMaterials = dto.existing_files ? [...dto.existing_files] : (sub.studyMaterials ? [...sub.studyMaterials] : []);
 
     if (files && files.length > 0) {
@@ -1226,8 +1265,17 @@ export class CourseService {
   }
 
   async deleteSubLesson(sublessonId: string) {
-    const sub = await this.subLessonModel.findByIdAndDelete(sublessonId);
+    const sub = await this.subLessonModel.findById(sublessonId);
     if (!sub) throw new NotFoundException('Sub-lesson not found');
+
+    // Clean up sublesson files from Cloudinary
+    if (sub.studyMaterials && sub.studyMaterials.length > 0) {
+      for (const mat of sub.studyMaterials) {
+        if (mat.file_url) this.cloudinary.deleteByUrl(mat.file_url);
+      }
+    }
+
+    await this.subLessonModel.findByIdAndDelete(sublessonId);
     return { status: true, message: 'Sub-lesson deleted' };
   }
 

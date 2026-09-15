@@ -53,8 +53,53 @@ export class CloudinaryService {
     });
   }
 
-  async deleteFile(publicId: string): Promise<void> {
+  async deleteFile(
+    publicId: string,
+    options?: { resource_type?: 'image' | 'video' | 'raw' },
+  ): Promise<void> {
     if (!publicId) return;
-    await cloudinary.uploader.destroy(publicId);
+    try {
+      await cloudinary.uploader.destroy(publicId, options);
+    } catch (err) {
+      console.warn('Failed to delete Cloudinary file:', publicId, err);
+    }
+  }
+
+  async deleteByUrl(fileUrl: string): Promise<void> {
+    if (!fileUrl || typeof fileUrl !== 'string') return;
+    if (!fileUrl.includes('cloudinary.com')) return;
+
+    try {
+      // Find upload segment
+      const uploadIdx = fileUrl.indexOf('/upload/');
+      if (uploadIdx === -1) return;
+
+      const preUpload = fileUrl.substring(0, uploadIdx);
+      const postUpload = fileUrl.substring(uploadIdx + 8); // after "/upload/"
+
+      // Determine resource_type from preUpload path (e.g. /video/upload or /image/upload or /raw/upload)
+      let resourceType: 'image' | 'video' | 'raw' = 'image';
+      if (preUpload.includes('/video')) {
+        resourceType = 'video';
+      } else if (preUpload.includes('/raw')) {
+        resourceType = 'raw';
+      }
+
+      // Remove version (e.g. "v1789023412/") if present
+      const cleanPath = postUpload.replace(/^v\d+\//, '');
+
+      // For raw files, publicId includes extension. For image/video, publicId excludes extension.
+      let publicId = cleanPath;
+      if (resourceType !== 'raw') {
+        const lastDot = cleanPath.lastIndexOf('.');
+        if (lastDot > 0) {
+          publicId = cleanPath.substring(0, lastDot);
+        }
+      }
+
+      await this.deleteFile(publicId, { resource_type: resourceType });
+    } catch (err) {
+      console.warn('Error deleting Cloudinary asset by URL:', fileUrl, err);
+    }
   }
 }
