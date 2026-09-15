@@ -1,5 +1,5 @@
 /**
- * Skillora Bulk Course Translation Script
+ * SkillBuild Bulk Course Translation Script
  * ======================================================
  * Translates all courses in the MongoDB database into
  * Punjabi (pa) and French (fr) using open-source cascading
@@ -112,7 +112,7 @@ const sleep = (ms: number) => new Promise((r) => setTimeout(r, ms));
 
 async function main() {
   console.log('====================================================');
-  console.log('   Skillora Bulk Course Translation Migration');
+  console.log('   SkillBuild Bulk Course Translation Migration');
   console.log('====================================================');
   console.log(`Connecting to MongoDB...`);
   await mongoose.connect(MONGODB_URI!);

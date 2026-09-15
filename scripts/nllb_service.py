@@ -1,5 +1,5 @@
 """
-Skillora NLLB-200 Self-Hosted Translation Microservice
+SkillBuild NLLB-200 Self-Hosted Translation Microservice
 ======================================================
 Optional local microservice providing Meta AI NLLB-200 model inference
 (facebook/nllb-200-distilled-600M) for English, Punjabi, and French.
@@ -71,7 +71,7 @@ PORT = 5005
 def create_app():
     if not DEPENDENCIES_AVAILABLE:
         print("=" * 60)
-        print("Skillora NLLB-200 Microservice")
+        print("SkillBuild NLLB-200 Microservice")
         print("=" * 60)
         print("Optional dependencies are not installed in this Python environment.")
         print("To run local NLLB-200 inference, please run:")
@@ -82,7 +82,7 @@ def create_app():
         print("=" * 60)
         sys.exit(0)
 
-    app = FastAPI(title="Skillora NLLB-200 Translation Service", version="1.0.0")
+    app = FastAPI(title="SkillBuild NLLB-200 Translation Service", version="1.0.0")
 
     print(f"Loading {MODEL_NAME}...")
     device = (
