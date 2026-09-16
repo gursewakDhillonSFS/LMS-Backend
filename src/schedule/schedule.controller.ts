@@ -72,4 +72,23 @@ export class ScheduleController {
     }
     return this.scheduleService.delete(req.user.userId, id);
   }
+
+  @Put('recording/:id')
+  updateRecording(
+    @Param('id') id: string,
+    @Body() body: { recordingUrl: string; recordingName?: string },
+    @Request() req,
+  ) {
+    if (req.user.role !== 'instructor' && req.user.role !== 'teacher') {
+      throw new ForbiddenException(
+        'Only instructors and teachers are authorized to update schedule recordings',
+      );
+    }
+    return this.scheduleService.updateRecording(
+      req.user.userId,
+      id,
+      body.recordingUrl,
+      body.recordingName,
+    );
+  }
 }

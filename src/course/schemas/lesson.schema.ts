@@ -38,9 +38,16 @@ export class Lesson {
   @Prop({ type: Boolean, default: false })
   unlock_after_previous: boolean;
 
+  @Prop({ type: Number, default: 1 })
+  week: number;
+
+  @Prop({ type: Number, default: 0 })
+  order: number;
+
   @Prop({ type: Date, default: () => new Date() })
   uploaded_at: Date;
 }
 
 export const LessonSchema = SchemaFactory.createForClass(Lesson);
-LessonSchema.index({ course_id: 1 });
+LessonSchema.index({ course_id: 1, week: 1, order: 1 });
+LessonSchema.index({ course_id: 1, order: 1 });

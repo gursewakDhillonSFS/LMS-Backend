@@ -34,6 +34,12 @@ export class Schedule {
 
   @Prop({ default: '', trim: true })
   meetingLink: string;
+
+  @Prop({ default: '', trim: true })
+  recordingUrl: string;
+
+  @Prop({ default: '', trim: true })
+  recordingName: string;
 }
 
 export const ScheduleSchema = SchemaFactory.createForClass(Schedule);

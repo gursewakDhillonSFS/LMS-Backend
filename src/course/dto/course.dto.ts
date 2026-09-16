@@ -48,6 +48,11 @@ export class CreateStep1Dto {
   duration?: string;
 
   @IsOptional()
+  @Transform(({ value }) => (value ? Number(value) : undefined))
+  @IsNumber()
+  total_weeks?: number;
+
+  @IsOptional()
   @IsEnum(['free', 'paid'])
   course_type?: string;
 
@@ -295,6 +300,11 @@ export class CreateLessonDto {
   @IsOptional()
   @IsBoolean()
   unlock_after_previous?: boolean;
+
+  @IsOptional()
+  @Transform(({ value }) => (value !== undefined && value !== null ? Number(value) : undefined))
+  @IsNumber()
+  week?: number;
 }
 
 // Frontend FormData fields: data (JSON string) + photo (file)
@@ -318,6 +328,11 @@ export class UpdateLessonDto {
   @IsOptional()
   @IsBoolean()
   unlock_after_previous?: boolean;
+
+  @IsOptional()
+  @Transform(({ value }) => (value !== undefined && value !== null ? Number(value) : undefined))
+  @IsNumber()
+  week?: number;
 
   @IsOptional()
   @IsArray()

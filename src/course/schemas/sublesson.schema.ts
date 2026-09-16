@@ -41,9 +41,12 @@ export class SubLesson {
   @Prop({ type: String, default: null })
   duration: string | null;
 
+  @Prop({ type: Number, default: 0 })
+  order: number;
+
   @Prop({ type: Date, default: () => new Date() })
   uploaded_at: Date;
 }
 
 export const SubLessonSchema = SchemaFactory.createForClass(SubLesson);
-SubLessonSchema.index({ course_id: 1, lesson_id: 1 });
+SubLessonSchema.index({ course_id: 1, lesson_id: 1, order: 1 });

@@ -245,6 +245,17 @@ export class CourseController {
     return this.courseService.getStudentSubmissions(userId, studentId);
   }
 
+  @UseGuards(JwtAuthGuard)
+  @Get('student/evaluations')
+  async getMyEvaluations(
+    @Req() req: AuthenticatedRequest,
+    @Query('courseId') courseId?: string,
+    @Query('batchId') batchId?: string,
+  ) {
+    const userId = req.user.userId;
+    return this.courseService.getMyEvaluations(userId, courseId, batchId);
+  }
+
   /**
    * GET /auth/course/v1/course-details/:course_id
    * Full CourseInfoDataProp shape
@@ -337,6 +348,21 @@ export class CourseController {
   }
 
   /**
+   * PUT /auth/course/v1/lesson/reorder
+   */
+  @UseGuards(JwtAuthGuard, InstructorOnlyGuard)
+  @Put('lesson/reorder')
+  async reorderLessons(
+    @Body()
+    body: {
+      course_id: string;
+      orders: { lesson_id: string; order: number }[];
+    },
+  ) {
+    return this.courseService.reorderLessons(body.course_id, body.orders);
+  }
+
+  /**
    * GET /auth/course/v1/get-sublesson-lesson?course_id=
    * Returns lessons with embedded sub-lessons array
    */
@@ -392,6 +418,21 @@ export class CourseController {
   @Delete('sublesson/delete/:sublesson_id')
   async deleteSubLesson(@Param('sublesson_id') sublessonId: string) {
     return this.courseService.deleteSubLesson(sublessonId);
+  }
+
+  /**
+   * PUT /auth/course/v1/sublesson/reorder
+   */
+  @UseGuards(JwtAuthGuard, InstructorOnlyGuard)
+  @Put('sublesson/reorder')
+  async reorderSublessons(
+    @Body()
+    body: {
+      lesson_id: string;
+      orders: { sublesson_id: string; order: number }[];
+    },
+  ) {
+    return this.courseService.reorderSublessons(body.lesson_id, body.orders);
   }
 
   // ─────────────────────────────────────────────────────────────────────────

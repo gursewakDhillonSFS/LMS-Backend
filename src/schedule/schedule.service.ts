@@ -8,6 +8,10 @@ import { InjectModel } from '@nestjs/mongoose';
 import { Model, Types } from 'mongoose';
 import { Schedule, ScheduleDocument } from './schemas/schedule.schema';
 import { User, UserDocument } from '../user/schemas/user.schema';
+import {
+  Announcement,
+  AnnouncementDocument,
+} from '../announcement/schemas/announcement.schema';
 import { CreateScheduleDto, UpdateScheduleDto } from './dto/schedule.dto';
 
 @Injectable()
@@ -15,6 +19,8 @@ export class ScheduleService {
   constructor(
     @InjectModel(Schedule.name) private scheduleModel: Model<ScheduleDocument>,
     @InjectModel(User.name) private userModel: Model<UserDocument>,
+    @InjectModel(Announcement.name)
+    private announcementModel: Model<AnnouncementDocument>,
   ) {}
 
   private async checkTeacherScheduleAccess(
@@ -120,6 +126,33 @@ export class ScheduleService {
     });
 
     const saved = await schedule.save();
+
+    // If associated with a course, automatically broadcast an announcement to enrolled students
+    if (saved.courseId) {
+      try {
+        const formattedDate = scheduleDate.toLocaleDateString('en-US', {
+          weekday: 'short',
+          month: 'short',
+          day: 'numeric',
+          year: 'numeric',
+        });
+        await this.announcementModel.create({
+          title: `Live Session Scheduled: ${dto.title}`,
+          message: `A new live interactive class "${dto.title}" has been scheduled for ${formattedDate} from ${dto.startTime} to ${dto.endTime}. The join link will be active at session time!`,
+          courseId: saved.courseId,
+          batchId: saved.batchId || null,
+          instructorId: new Types.ObjectId(userId),
+          status: 'published',
+          publishedAt: new Date(),
+          type: 'general',
+          referenceId: String(saved._id),
+        });
+      } catch (annErr) {
+        // Non-blocking log
+        console.error('Failed to create announcement for live class:', annErr);
+      }
+    }
+
     return {
       success: true,
       message: 'Schedule created successfully',
@@ -332,4 +365,48 @@ export class ScheduleService {
     await this.scheduleModel.findByIdAndDelete(id);
     return { success: true, message: 'Schedule deleted successfully' };
   }
+
+  async updateRecording(
+    userId: string,
+    id: string,
+    recordingUrl: string,
+    recordingName?: string,
+  ) {
+    const user = await this.userModel.findById(userId);
+    if (!user) throw new NotFoundException('User not found');
+
+    const schedule = await this.scheduleModel.findById(id);
+    if (!schedule) throw new NotFoundException('Schedule event not found');
+
+    if (
+      schedule.organisationId.toString() !== user.organisationId?.toString()
+    ) {
+      throw new ForbiddenException(
+        'You do not have permission to modify this schedule',
+      );
+    }
+
+    if (user.role === 'teacher') {
+      if (schedule.createdBy.toString() !== userId) {
+        await this.checkTeacherScheduleAccess(
+          user,
+          schedule.courseId?.toString(),
+          schedule.batchId || undefined,
+        );
+      }
+    }
+
+    schedule.recordingUrl = recordingUrl || '';
+    if (recordingName) {
+      schedule.recordingName = recordingName;
+    }
+    await schedule.save();
+
+    return {
+      success: true,
+      message: 'Meeting recording updated successfully',
+      data: schedule,
+    };
+  }
 }
+

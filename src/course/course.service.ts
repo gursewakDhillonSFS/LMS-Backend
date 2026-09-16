@@ -215,6 +215,7 @@ export class CourseService {
       teacherRevenuePercent: course.teacherRevenuePercent ?? 20,
       course_type: course.course_type,
       course_duration: course.duration,
+      total_weeks: (course as any).total_weeks || 4,
       course_level: course.course_type, // mapped for frontend compat
       course_schedule: course.course_schedule,
       course_status: course.course_status,
@@ -331,6 +332,28 @@ export class CourseService {
       course_name: fields.course_name,
       ...(headTeacherId && { head_teacher: headTeacherId }),
       ...(fields.duration && { duration: fields.duration }),
+      total_weeks:
+        fields.total_weeks !== undefined && fields.total_weeks !== null
+          ? Number(fields.total_weeks)
+          : fields.duration === '1_week'
+          ? 1
+          : fields.duration === '2_weeks'
+          ? 2
+          : fields.duration === '3_weeks'
+          ? 3
+          : fields.duration === '4_weeks' || fields.duration === '1_month'
+          ? 4
+          : fields.duration === '6_weeks'
+          ? 6
+          : fields.duration === '8_weeks' || fields.duration === '2_months'
+          ? 8
+          : fields.duration === '12_weeks' || fields.duration === '3_months'
+          ? 12
+          : fields.duration === '16_weeks'
+          ? 16
+          : fields.duration === '24_weeks'
+          ? 24
+          : 4,
       ...(fields.course_type && { course_type: fields.course_type }),
       ...(fields.course_price !== undefined && {
         course_price: Number(fields.course_price),
@@ -997,6 +1020,7 @@ export class CourseService {
       lesson_name: dto.lesson_name,
       lesson_description: dto.description ?? null,
       unlock_after_previous: dto.unlock_after_previous ?? false,
+      week: dto.week !== undefined && dto.week !== null ? Number(dto.week) : 1,
       studyMaterials,
       uploaded_at: new Date(),
     });
@@ -1043,6 +1067,9 @@ export class CourseService {
         }),
         ...(dto.unlock_after_previous !== undefined && {
           unlock_after_previous: dto.unlock_after_previous,
+        }),
+        ...(dto.week !== undefined && dto.week !== null && {
+          week: Number(dto.week),
         }),
         studyMaterials,
       },
@@ -1092,6 +1119,7 @@ export class CourseService {
 
     const lessons = await this.lessonModel
       .find({ course_id: new Types.ObjectId(courseId) })
+      .sort({ order: 1, createdAt: 1 })
       .lean();
 
     const lessonIds = lessons.map(
@@ -1099,6 +1127,7 @@ export class CourseService {
     );
     const sublessons = await this.subLessonModel
       .find({ lesson_id: { $in: lessonIds } })
+      .sort({ order: 1, createdAt: 1 })
       .lean();
 
     const lessonTransMap = new Map<string, { name?: string; desc?: string }>();
@@ -1156,6 +1185,8 @@ export class CourseService {
           transL?.desc !== undefined ? transL.desc : l.lesson_description,
         studyMaterials: l.studyMaterials || [],
         unlock_after_previous: l.unlock_after_previous,
+        week: (l as any).week || 1,
+        order: (l as any).order || 0,
         uploaded_at: l.uploaded_at,
         sublessons: sublessons
           .filter(
@@ -1180,7 +1211,14 @@ export class CourseService {
       };
     });
 
-    return { status: true, data: { lessons: lessonData, overview } };
+    return {
+      status: true,
+      data: {
+        total_weeks: course ? (course as any).total_weeks || 4 : 4,
+        overview,
+        lessons: lessonData,
+      },
+    };
   }
 
   // ─────────────────────────────────────────────────────────────────────────
@@ -1277,6 +1315,38 @@ export class CourseService {
 
     await this.subLessonModel.findByIdAndDelete(sublessonId);
     return { status: true, message: 'Sub-lesson deleted' };
+  }
+
+  async reorderLessons(courseId: string, orders: { lesson_id: string; order: number }[]) {
+    if (!orders || !Array.isArray(orders)) return { status: true };
+    const bulkOps = orders
+      .filter((item) => item.lesson_id && Types.ObjectId.isValid(item.lesson_id))
+      .map((item) => ({
+        updateOne: {
+          filter: { _id: new Types.ObjectId(item.lesson_id) },
+          update: { $set: { order: item.order } },
+        },
+      }));
+    if (bulkOps.length > 0) {
+      await this.lessonModel.bulkWrite(bulkOps);
+    }
+    return { status: true, message: 'Lessons reordered successfully' };
+  }
+
+  async reorderSublessons(lessonId: string, orders: { sublesson_id: string; order: number }[]) {
+    if (!orders || !Array.isArray(orders)) return { status: true };
+    const bulkOps = orders
+      .filter((item) => item.sublesson_id && Types.ObjectId.isValid(item.sublesson_id))
+      .map((item) => ({
+        updateOne: {
+          filter: { _id: new Types.ObjectId(item.sublesson_id) },
+          update: { $set: { order: item.order } },
+        },
+      }));
+    if (bulkOps.length > 0) {
+      await this.subLessonModel.bulkWrite(bulkOps);
+    }
+    return { status: true, message: 'Sub-topics reordered successfully' };
   }
 
   async deleteCourse(courseId: string) {
@@ -1937,6 +2007,176 @@ export class CourseService {
       data: {
         assignments: assignmentsData,
         quizzes: quizzesData,
+      },
+    };
+  }
+
+  async getMyEvaluations(userId: string, courseId?: string, batchId?: string) {
+    const user = await this.userModel.findById(userId).lean();
+    if (!user) throw new NotFoundException('User not found');
+
+    let studentBatchIds: string[] = [];
+    if (batchId) {
+      studentBatchIds = [batchId];
+    } else if (user.batchIds && user.batchIds.length > 0) {
+      studentBatchIds = user.batchIds.map(String);
+    } else {
+      const BatchEnrolled = this.connection.collection('batch_enrolled_students');
+      const query: Record<string, unknown> = { student_id: new Types.ObjectId(userId) };
+      if (courseId) query.course_id = new Types.ObjectId(courseId);
+      const enrollments = await BatchEnrolled.find(query).toArray();
+      studentBatchIds = enrollments.map((e) => String(e.batch_id)).filter(Boolean);
+    }
+
+    let assignmentsData: Record<string, unknown>[] = [];
+    let quizzesData: Record<string, unknown>[] = [];
+
+    try {
+      const AssignmentModel = this.connection.model('Assignment');
+      const SubmissionModel = this.connection.model('AssignmentSubmission');
+      const QuizModel = this.connection.model('Quiz');
+      const QuizSubmissionModel = this.connection.model('QuizSubmission');
+
+      const assignQuery: Record<string, unknown> = { status: 'published' };
+      if (studentBatchIds.length > 0) {
+        assignQuery.batchId = { $in: studentBatchIds };
+      } else if (courseId) {
+        assignQuery.courseId = new Types.ObjectId(courseId);
+      }
+
+      const assignments = (await AssignmentModel.find(assignQuery).lean()) as any[];
+      const assignmentIds = assignments.map((a) => a._id);
+      const submissions = (await SubmissionModel.find({
+        assignmentId: { $in: assignmentIds },
+        studentId: new Types.ObjectId(userId),
+      }).lean()) as any[];
+
+      assignmentsData = assignments.map((a) => {
+        const sub = submissions.find(
+          (s) => String(s.assignmentId) === String(a._id),
+        );
+        return {
+          id: String(a._id),
+          title: a.assignmentName,
+          type: 'Assignment',
+          description: a.overview,
+          dueDate: a.dueDate
+            ? new Date(a.dueDate).toLocaleDateString('en-US', {
+                day: 'numeric',
+                month: 'short',
+                year: 'numeric',
+              })
+            : 'No Due Date',
+          status: sub ? (sub.status || 'Submitted') : 'Not Started',
+          submittedDate: sub?.dateOfSubmit
+            ? new Date(sub.dateOfSubmit).toLocaleDateString('en-US', {
+                day: 'numeric',
+                month: 'short',
+                year: 'numeric',
+              })
+            : null,
+          score:
+            sub?.result !== undefined && sub?.result !== null
+              ? Number(sub.result)
+              : sub?.obtainedScore ?? null,
+          totalMarks: a.totalMarks || 100,
+          feedback: sub?.feedback || null,
+        };
+      });
+
+      const quizQuery: Record<string, unknown> = { status: 'published' };
+      if (studentBatchIds.length > 0) {
+        quizQuery.batchId = { $in: studentBatchIds };
+      } else if (courseId) {
+        quizQuery.courseId = new Types.ObjectId(courseId);
+      }
+
+      const quizzes = (await QuizModel.find(quizQuery).lean()) as any[];
+      const quizIds = quizzes.map((q) => q._id);
+      const quizSubmissions = (await QuizSubmissionModel.find({
+        quizId: { $in: quizIds },
+        studentId: new Types.ObjectId(userId),
+      }).lean()) as any[];
+
+      quizzesData = quizzes.map((q) => {
+        const sub = quizSubmissions.find(
+          (s) => String(s.quizId) === String(q._id),
+        );
+        return {
+          id: String(q._id),
+          title: q.quizName,
+          type: 'Quiz',
+          tags: q.quizType === 'mcq' ? ['MCQ'] : ['Mixed'],
+          description: q.overview,
+          status: sub ? (sub.status || 'Completed') : 'Not Started',
+          dueDate: q.dueDate
+            ? new Date(q.dueDate).toLocaleDateString('en-US', {
+                day: 'numeric',
+                month: 'short',
+                year: 'numeric',
+              })
+            : 'No Due Date',
+          submittedDate: sub?.dateOfSubmit
+            ? new Date(sub.dateOfSubmit).toLocaleDateString('en-US', {
+                day: 'numeric',
+                month: 'short',
+                year: 'numeric',
+              })
+            : null,
+          score: sub?.obtainedScore !== undefined ? sub.obtainedScore : null,
+          totalMarks: sub?.totalMarks || q.totalMarks || 100,
+          feedback: sub?.feedback || null,
+        };
+      });
+    } catch (err) {
+      this.logger.error('Error fetching student evaluations', err);
+    }
+
+    // Calculate performance statistics
+    const totalItems = assignmentsData.length + quizzesData.length;
+    const completedAssignments = assignmentsData.filter(
+      (a) => a.status !== 'Not Started',
+    );
+    const completedQuizzes = quizzesData.filter(
+      (q) => q.status !== 'Not Started',
+    );
+    const totalCompleted =
+      completedAssignments.length + completedQuizzes.length;
+
+    let totalScoreSum = 0;
+    let gradedCount = 0;
+    [...completedAssignments, ...completedQuizzes].forEach((item: any) => {
+      if (item.score !== null && item.score !== undefined && item.totalMarks) {
+        const percentage = (Number(item.score) / Number(item.totalMarks)) * 100;
+        totalScoreSum += percentage;
+        gradedCount++;
+      }
+    });
+
+    const averageScore =
+      gradedCount > 0 ? Math.round(totalScoreSum / gradedCount) : 0;
+    const isPassed = totalCompleted > 0 && averageScore >= 50;
+
+    return {
+      status: true,
+      data: {
+        assignments: assignmentsData,
+        quizzes: quizzesData,
+        stats: {
+          totalItems,
+          totalCompleted,
+          gradedCount,
+          averageScore,
+          isPassed,
+          resultRemark: isPassed
+            ? 'Pass'
+            : totalCompleted === 0
+              ? 'Not Started'
+              : 'Needs Improvement',
+          certificateEligible:
+            isPassed &&
+            totalCompleted / Math.max(1, totalItems) >= 0.7,
+        },
       },
     };
   }

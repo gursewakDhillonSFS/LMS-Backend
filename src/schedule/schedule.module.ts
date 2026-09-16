@@ -4,12 +4,17 @@ import { ScheduleController } from './schedule.controller';
 import { ScheduleService } from './schedule.service';
 import { Schedule, ScheduleSchema } from './schemas/schedule.schema';
 import { User, UserSchema } from '../user/schemas/user.schema';
+import {
+  Announcement,
+  AnnouncementSchema,
+} from '../announcement/schemas/announcement.schema';
 
 @Module({
   imports: [
     MongooseModule.forFeature([
       { name: Schedule.name, schema: ScheduleSchema },
       { name: User.name, schema: UserSchema },
+      { name: Announcement.name, schema: AnnouncementSchema },
     ]),
   ],
   controllers: [ScheduleController],

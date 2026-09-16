@@ -15,6 +15,9 @@ export class Course {
   @Prop({ type: String, default: null })
   duration: string | null; // "1_week" | "2_weeks" | "1_month" | "3_months"
 
+  @Prop({ type: Number, default: 4 })
+  total_weeks: number;
+
   @Prop({ enum: ['free', 'paid'], default: 'free' })
   course_type: string;
 

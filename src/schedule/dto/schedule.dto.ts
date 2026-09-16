@@ -38,6 +38,15 @@ export class CreateScheduleDto {
   @IsOptional()
   @IsString()
   meetingLink?: string;
+
+  @IsOptional()
+  @IsString()
+  recordingUrl?: string;
+
+  @IsOptional()
+  @IsString()
+  recordingName?: string;
 }
 
 export class UpdateScheduleDto extends CreateScheduleDto {}
+
