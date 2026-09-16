@@ -61,8 +61,7 @@ export class UserController {
 
   @Post('verify-otp')
   verifyOtp(@Body() dto: VerifyOtpDto, @Request() req) {
-    // userId passed as query or from body context
-    const userId = req.body.user_id;
+    const userId = dto.user_id || req.body?.user_id;
     return this.userService.verifyOtp(userId, dto);
   }
 

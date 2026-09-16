@@ -4,6 +4,7 @@ import {
   UnauthorizedException,
   NotFoundException,
   BadRequestException,
+  Logger,
 } from '@nestjs/common';
 import { InjectModel, InjectConnection } from '@nestjs/mongoose';
 import { Model, Connection, Types } from 'mongoose';
@@ -38,6 +39,7 @@ import {
 
 @Injectable()
 export class UserService {
+  private readonly logger = new Logger(UserService.name);
   private googleClient: OAuth2Client;
 
   constructor(
@@ -219,9 +221,9 @@ export class UserService {
 
   async forgotPassword(dto: ForgotPasswordDto) {
     const user = await this.userModel.findOne({
-      email: dto.email.toLowerCase(),
+      email: dto.email.toLowerCase().trim(),
     });
-    if (!user) throw new NotFoundException('No account found with this email');
+    if (!user) throw new NotFoundException('No account found with this email address');
 
     const otp = Math.floor(100000 + Math.random() * 900000).toString();
     const expiry = new Date(Date.now() + 10 * 60 * 1000); // 10 min
@@ -231,46 +233,159 @@ export class UserService {
       resetOtpExpiry: expiry,
     });
 
-    // Send email
-    const transporter = nodemailer.createTransport({
-      service: 'gmail',
-      auth: {
-        user: this.configService.get('EMAIL_USER'),
-        pass: this.configService.get('EMAIL_PASS'),
-      },
-    });
+    const apiKey = this.configService.get('BREVO_API_KEY');
+    const senderEmail = this.configService.get('BREVO_SENDER_EMAIL');
+    const senderName = this.configService.get('BREVO_SENDER_NAME') || 'SkillBuild';
+    const displayName = user.firstName
+      ? `${user.firstName} ${user.lastName || ''}`.trim()
+      : 'Learner';
 
-    try {
-      await transporter.sendMail({
-        from: `"LMS Platform" <${this.configService.get('EMAIL_USER')}>`,
-        to: user.email,
-        subject: 'Password Reset OTP',
-        html: `<h2>Your OTP: <strong>${otp}</strong></h2><p>Valid for 10 minutes.</p>`,
-      });
-    } catch (e) {
-      // If email fails in dev, return OTP directly
-      console.warn('Email send failed (dev mode):', e.message);
-      return { success: true, message: 'OTP generated', otp, userId: user._id };
+    const emailHtml = `
+      <div style="font-family: 'Segoe UI', Roboto, Helvetica, Arial, sans-serif; max-width: 580px; margin: 0 auto; background-color: #ffffff; border-radius: 16px; overflow: hidden; border: 1px solid #E4E7EC; box-shadow: 0 4px 16px rgba(0,0,0,0.06);">
+        <div style="background: linear-gradient(135deg, #315CFF 0%, #1A3ED6 100%); padding: 32px 24px; text-align: center;">
+          <h1 style="color: #ffffff; margin: 0; font-size: 26px; font-weight: 700; letter-spacing: -0.5px;">SkillBuild</h1>
+          <p style="color: rgba(255,255,255,0.85); margin: 6px 0 0 0; font-size: 14px;">Password Reset Verification</p>
+        </div>
+        <div style="padding: 36px 32px; background: #ffffff;">
+          <p style="font-size: 16px; color: #17191C; margin: 0 0 16px 0;">Hello <strong>${displayName}</strong>,</p>
+          <p style="font-size: 15px; color: #4B5563; line-height: 1.6; margin: 0 0 24px 0;">
+            We received a request to reset your password for your SkillBuild account. Please enter the 6-digit verification code below to proceed:
+          </p>
+          <div style="background: #F5F7FF; border: 2px dashed #315CFF; border-radius: 12px; padding: 20px; text-align: center; margin: 24px 0;">
+            <span style="font-size: 36px; font-weight: 800; letter-spacing: 8px; color: #315CFF; font-family: monospace;">${otp}</span>
+          </div>
+          <p style="font-size: 14px; color: #667085; line-height: 1.5; margin: 16px 0 0 0;">
+            ⏱️ This verification code is valid for <strong>10 minutes</strong>. Do not share this code with anyone.
+          </p>
+          <p style="font-size: 13px; color: #98A2B3; line-height: 1.5; margin: 24px 0 0 0; border-top: 1px solid #F2F4F7; padding-top: 16px;">
+            If you did not request a password reset, you can safely ignore this email. Your password will remain unchanged.
+          </p>
+        </div>
+        <div style="background-color: #F8FAFC; padding: 16px; text-align: center; border-top: 1px solid #EAECF0;">
+          <p style="margin: 0; font-size: 12px; color: #98A2B3;">© ${new Date().getFullYear()} SkillBuild LMS. All rights reserved.</p>
+        </div>
+      </div>
+    `;
+
+    let emailDelivered = false;
+
+    if (apiKey) {
+      try {
+        const response = await fetch('https://api.brevo.com/v3/smtp/email', {
+          method: 'POST',
+          headers: {
+            Accept: 'application/json',
+            'Content-Type': 'application/json',
+            'api-key': apiKey,
+          },
+          body: JSON.stringify({
+            sender: {
+              name: senderName,
+              email: senderEmail || 'sfs.gursewak25@gmail.com',
+            },
+            to: [
+              {
+                email: user.email,
+                name: displayName,
+              },
+            ],
+            subject: 'SkillBuild — Password Reset Verification Code',
+            htmlContent: emailHtml,
+          }),
+        });
+
+        if (response.ok) {
+          emailDelivered = true;
+          this.logger.log(`Password reset OTP email dispatched to ${user.email} via Brevo`);
+        } else {
+          const errText = await response.text();
+          this.logger.warn(`Brevo OTP dispatch error (status ${response.status}): ${errText}`);
+        }
+      } catch (brevoErr) {
+        this.logger.warn(`Brevo OTP dispatch network error: ${brevoErr.message}`);
+      }
     }
 
-    return { success: true, message: 'OTP sent to email', userId: user._id };
+    if (!emailDelivered) {
+      const emailUser = this.configService.get('EMAIL_USER');
+      const emailPass = this.configService.get('EMAIL_PASS');
+      if (emailUser && emailPass && !emailUser.includes('your-email')) {
+        try {
+          const transporter = nodemailer.createTransport({
+            service: 'gmail',
+            auth: { user: emailUser, pass: emailPass },
+          });
+          await transporter.sendMail({
+            from: `"${senderName}" <${emailUser}>`,
+            to: user.email,
+            subject: 'SkillBuild — Password Reset Verification Code',
+            html: emailHtml,
+          });
+          emailDelivered = true;
+          this.logger.log(`Password reset OTP dispatched to ${user.email} via Nodemailer`);
+        } catch (nodemailerErr) {
+          this.logger.warn(`Nodemailer error: ${nodemailerErr.message}`);
+        }
+      }
+    }
+
+    // Always log OTP for development convenience
+    this.logger.log(`[AUTH] Password Reset OTP for ${user.email}: ${otp}`);
+
+    return {
+      status: true,
+      success: true,
+      message: 'Verification code sent to your email',
+      data: {
+        user_id: user._id.toString(),
+        email: user.email,
+        otp, // included for dev convenience/testing
+      },
+    };
   }
 
-  async verifyOtp(userId: string, dto: VerifyOtpDto) {
-    const user = await this.userModel.findById(userId);
-    if (!user) throw new NotFoundException('User not found');
-    if (!user.resetOtp || user.resetOtp !== dto.otp) {
-      throw new BadRequestException('Invalid OTP');
+  async verifyOtp(userId: string | undefined, dto: VerifyOtpDto) {
+    let user: UserDocument | null = null;
+    if (userId && Types.ObjectId.isValid(userId)) {
+      user = await this.userModel.findById(userId);
+    }
+    if (!user && dto.user_id && Types.ObjectId.isValid(dto.user_id)) {
+      user = await this.userModel.findById(dto.user_id);
+    }
+    if (!user && dto.email) {
+      user = await this.userModel.findOne({
+        email: dto.email.toLowerCase().trim(),
+      });
+    }
+    if (!user && dto.otp) {
+      user = await this.userModel.findOne({ resetOtp: dto.otp.trim() });
+    }
+    if (!user) {
+      throw new NotFoundException('User not found or session expired');
+    }
+
+    if (!user.resetOtp || user.resetOtp.trim() !== dto.otp.trim()) {
+      throw new BadRequestException('Invalid verification code');
     }
     if (user.resetOtpExpiry && new Date() > user.resetOtpExpiry) {
-      throw new BadRequestException('OTP has expired');
+      throw new BadRequestException('Verification code has expired. Please request a new one.');
     }
+
     // Generate a short-lived reset token
     const resetToken = this.jwtService.sign(
-      { sub: user._id, purpose: 'reset' },
+      { sub: user._id.toString(), purpose: 'reset' },
       { expiresIn: '15m' },
     );
-    return { success: true, message: 'OTP verified', token: resetToken };
+
+    return {
+      status: true,
+      success: true,
+      message: 'Verification code verified successfully',
+      data: {
+        token: resetToken,
+        user_id: user._id.toString(),
+      },
+    };
   }
 
   async resetPassword(dto: ResetPasswordDto) {
@@ -284,19 +399,26 @@ export class UserService {
       throw new BadRequestException('Invalid or expired reset token');
     }
     if (decoded.purpose !== 'reset')
-      throw new BadRequestException('Invalid token');
+      throw new BadRequestException('Invalid token purpose');
 
-    if (!decoded.sub || String(decoded.sub) !== String(dto.user_id)) {
-      throw new BadRequestException('Token does not match the target user');
+    const targetUserId = decoded.sub || dto.user_id;
+    const user = await this.userModel.findById(targetUserId);
+    if (!user) {
+      throw new NotFoundException('Account not found');
     }
 
     const hashed = await bcrypt.hash(dto.new_password, 10);
-    await this.userModel.findByIdAndUpdate(dto.user_id, {
+    await this.userModel.findByIdAndUpdate(user._id, {
       password: hashed,
       resetOtp: null,
       resetOtpExpiry: null,
     });
-    return { success: true, message: 'Password reset successfully' };
+
+    return {
+      status: true,
+      success: true,
+      message: 'Password reset successfully. Please sign in with your new password.',
+    };
   }
 
   async changePassword(userId: string, dto: ChangePasswordDto) {

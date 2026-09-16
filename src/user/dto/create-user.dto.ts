@@ -59,6 +59,10 @@ export class VerifyOtpDto {
   @IsOptional()
   @IsString()
   user_id?: string;
+
+  @IsOptional()
+  @IsEmail()
+  email?: string;
 }
 
 // ─── Reset Password ──────────────────────────────────────────────────────────
