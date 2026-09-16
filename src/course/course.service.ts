@@ -37,6 +37,7 @@ import {
 } from './schemas/sublesson-translation.schema';
 import { TranslationQueueService } from '../translation/translation-queue.service';
 import { TranslationService } from '../translation/translation.service';
+import { RedisService } from '../redis/redis.service';
 import {
   CreateStep1Dto,
   CreateStep2Dto,
@@ -81,7 +82,17 @@ export class CourseService {
     private readonly subLessonTranslationModel: Model<SubLessonTranslationDocument>,
     private readonly translationQueueService: TranslationQueueService,
     private readonly translationService: TranslationService,
+    private readonly redisService: RedisService,
   ) {}
+
+  /**
+   * Helper to evict all cached representations of a course across all locales and users
+   */
+  private async invalidateCourseCache(courseId: string | Types.ObjectId): Promise<void> {
+    const cid = String(courseId);
+    await this.redisService.delByPattern(`course:details:${cid}:*`);
+  }
+
 
   // ─── Helper: build flat course response ───────────────────────────────────
   private async buildCourseResponse(
@@ -581,6 +592,8 @@ export class CourseService {
       });
     }
 
+    await this.invalidateCourseCache(dto.course_id);
+
     return {
       status: true,
       message: 'Course info updated',
@@ -596,6 +609,8 @@ export class CourseService {
     this.translationService.onCourseUpdated(dto.course_id).catch((err) => {
       this.logger.error(`Error updating translation on step 2: ${err.message}`);
     });
+
+    await this.invalidateCourseCache(dto.course_id);
 
     return {
       status: true,
@@ -618,6 +633,8 @@ export class CourseService {
       this.logger.error(`Error updating translation on step 3: ${err.message}`);
     });
 
+    await this.invalidateCourseCache(dto.course_id);
+
     return {
       status: true,
       message: 'Skills updated',
@@ -633,6 +650,8 @@ export class CourseService {
     this.translationService.onCourseUpdated(dto.course_id).catch((err) => {
       this.logger.error(`Error updating translation on step 4: ${err.message}`);
     });
+
+    await this.invalidateCourseCache(dto.course_id);
 
     return {
       status: true,
@@ -658,6 +677,8 @@ export class CourseService {
       });
     }
 
+    await this.invalidateCourseCache(dto.course_id);
+
     return {
       status: true,
       message: 'Teacher info updated',
@@ -673,6 +694,8 @@ export class CourseService {
     this.translationService.onCourseUpdated(dto.course_id).catch((err) => {
       this.logger.error(`Error updating translation on step 6: ${err.message}`);
     });
+
+    await this.invalidateCourseCache(dto.course_id);
 
     return {
       status: true,
@@ -694,6 +717,8 @@ export class CourseService {
       $set: updatePayload,
     });
 
+    await this.invalidateCourseCache(dto.course_id);
+
     if (dto.status === 'published') {
       this.translationQueueService
         .enqueueCourseTranslation(dto.course_id, ['pa', 'fr'])
@@ -707,6 +732,7 @@ export class CourseService {
         this.logger.error(`Error updating translation on course status change: ${err.message}`);
       });
     }
+
 
     return {
       status: true,
@@ -909,12 +935,23 @@ export class CourseService {
     userId?: string | null,
     locale = 'en',
   ) {
+    const cacheKey = `course:details:${courseId}:${locale}:${userId || 'anon'}`;
+    const cached = await this.redisService.get(cacheKey);
+    if (cached) {
+      return cached;
+    }
+
     const course = await this.courseModel.findById(courseId);
     if (!course) throw new NotFoundException('Course not found');
 
     const detail = await this.buildCourseResponse(course, userId, locale);
-    return { status: true, data: detail };
+    const result = { status: true, data: detail };
+
+    // Cache course details for 30 minutes (1800s)
+    await this.redisService.set(cacheKey, result, 1800);
+    return result;
   }
+
 
   async getInstructorDashboardStats(userId: string) {
     const user = await this.userModel.findById(userId).lean();

@@ -18,10 +18,12 @@ import { CommunicationModule } from './communication/communication.module';
 import { CertificateModule } from './certificate/certificate.module';
 import { AdminModule } from './admin/admin.module';
 import { TranslationModule } from './translation/translation.module';
+import { RedisModule } from './redis/redis.module';
 
 @Module({
   imports: [
     ConfigModule.forRoot({ isGlobal: true }),
+    RedisModule,
     MongooseModule.forRootAsync({
       imports: [ConfigModule],
       useFactory: (config: ConfigService) => ({

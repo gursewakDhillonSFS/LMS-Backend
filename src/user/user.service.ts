@@ -21,6 +21,7 @@ import {
   AuthProvider,
 } from './schemas/user.schema';
 import { CloudinaryService } from '../cloudinary/cloudinary.service';
+import { RedisService } from '../redis/redis.service';
 import {
   CreateUserDto,
   LoginDto,
@@ -47,6 +48,7 @@ export class UserService {
     private jwtService: JwtService,
     private configService: ConfigService,
     private cloudinary: CloudinaryService,
+    private redisService: RedisService,
     @InjectConnection() private connection: Connection,
   ) {
     this.googleClient = new OAuth2Client(
@@ -228,6 +230,10 @@ export class UserService {
     const otp = Math.floor(100000 + Math.random() * 900000).toString();
     const expiry = new Date(Date.now() + 10 * 60 * 1000); // 10 min
 
+    // Fast in-memory storage in Redis with 10-minute auto-expiry
+    await this.redisService.setOtp(user.email, otp, 600);
+
+    // Persist to DB as resilient fallback
     await this.userModel.findByIdAndUpdate(user._id, {
       resetOtp: otp,
       resetOtpExpiry: expiry,
@@ -364,12 +370,30 @@ export class UserService {
       throw new NotFoundException('User not found or session expired');
     }
 
-    if (!user.resetOtp || user.resetOtp.trim() !== dto.otp.trim()) {
-      throw new BadRequestException('Invalid verification code');
+    // Verify against Redis first (fast in-memory)
+    const redisOtp = await this.redisService.getOtp(user.email);
+    let isOtpValid = false;
+
+    if (redisOtp) {
+      isOtpValid = redisOtp.trim() === dto.otp.trim();
+    } else {
+      // Fallback to database check
+      isOtpValid = Boolean(
+        user.resetOtp &&
+        user.resetOtp.trim() === dto.otp.trim() &&
+        (!user.resetOtpExpiry || new Date() <= user.resetOtpExpiry),
+      );
     }
-    if (user.resetOtpExpiry && new Date() > user.resetOtpExpiry) {
-      throw new BadRequestException('Verification code has expired. Please request a new one.');
+
+    if (!isOtpValid) {
+      throw new BadRequestException('Invalid or expired verification code');
     }
+
+    // Immediately evict verified OTP from both Redis and DB
+    await this.redisService.delOtp(user.email);
+    await this.userModel.findByIdAndUpdate(user._id, {
+      $unset: { resetOtp: 1, resetOtpExpiry: 1 },
+    });
 
     // Generate a short-lived reset token
     const resetToken = this.jwtService.sign(

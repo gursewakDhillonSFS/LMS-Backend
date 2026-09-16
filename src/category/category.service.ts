@@ -9,6 +9,7 @@ import { InjectModel } from '@nestjs/mongoose';
 import { Model } from 'mongoose';
 import { Category, CategoryDocument } from './schemas/category.schema';
 import { CreateCategoryDto, UpdateCategoryDto } from './dto/category.dto';
+import { RedisService } from '../redis/redis.service';
 
 // ─── Seed data from the provided category list ────────────────────────────────
 const SEED_CATEGORIES = [
@@ -29,10 +30,12 @@ const SEED_CATEGORIES = [
 @Injectable()
 export class CategoryService implements OnModuleInit {
   private readonly logger = new Logger(CategoryService.name);
+  private readonly CACHE_KEY = 'categories:all';
 
   constructor(
     @InjectModel(Category.name)
     private categoryModel: Model<CategoryDocument>,
+    private readonly redisService: RedisService,
   ) {}
 
   // ─── Auto-seed on startup ────────────────────────────────────────────────────
@@ -43,17 +46,23 @@ export class CategoryService implements OnModuleInit {
         SEED_CATEGORIES.map((name) => ({ category_name: name })),
       );
       this.logger.log(`✅ Seeded ${SEED_CATEGORIES.length} categories`);
+      await this.redisService.del(this.CACHE_KEY);
     }
   }
 
   // ─── GET all categories ───────────────────────────────────────────────────────
   async findAll() {
+    const cached = await this.redisService.get(this.CACHE_KEY);
+    if (cached) {
+      return cached;
+    }
+
     const categories = await this.categoryModel
       .find({ isActive: true })
       .select('_id category_name description')
       .sort({ category_name: 1 });
 
-    return {
+    const result = {
       status: true,
       message: 'Categories fetched successfully',
       data: categories.map((cat) => ({
@@ -65,6 +74,11 @@ export class CategoryService implements OnModuleInit {
         description: cat.description,
       })),
     };
+
+    // Cache categories for 24 hours (86400 seconds)
+    await this.redisService.set(this.CACHE_KEY, result, 86400);
+
+    return result;
   }
 
   // ─── GET single category ──────────────────────────────────────────────────────
@@ -89,6 +103,7 @@ export class CategoryService implements OnModuleInit {
     if (existing) throw new ConflictException('Category already exists');
 
     const cat = await this.categoryModel.create(dto);
+    await this.redisService.del(this.CACHE_KEY);
     return {
       status: true,
       message: 'Category created successfully',
@@ -102,6 +117,7 @@ export class CategoryService implements OnModuleInit {
       new: true,
     });
     if (!cat) throw new NotFoundException('Category not found');
+    await this.redisService.del(this.CACHE_KEY);
     return {
       status: true,
       message: 'Category updated successfully',
@@ -113,6 +129,8 @@ export class CategoryService implements OnModuleInit {
   async delete(id: string) {
     const cat = await this.categoryModel.findByIdAndDelete(id);
     if (!cat) throw new NotFoundException('Category not found');
+    await this.redisService.del(this.CACHE_KEY);
     return { status: true, message: 'Category deleted successfully' };
   }
+
 }
