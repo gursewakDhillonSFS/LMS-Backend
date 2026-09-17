@@ -12,6 +12,7 @@ import {
 } from './schemas/chat-message.schema';
 import { User, UserDocument } from '../user/schemas/user.schema';
 import { Course, CourseDocument } from '../course/schemas/course.schema';
+import { NotificationService } from '../notification/notification.service';
 
 @Injectable()
 export class CommunicationService {
@@ -23,6 +24,7 @@ export class CommunicationService {
     @InjectModel(User.name) private userModel: Model<UserDocument>,
     @InjectModel(Course.name) private courseModel: Model<CourseDocument>,
     @InjectConnection() private connection: Connection,
+    private readonly notificationService: NotificationService,
   ) {}
 
   async ensureGroupForBatch(
@@ -216,6 +218,7 @@ export class CommunicationService {
           senderPhoto: (sender as { photo?: string })?.photo || null,
           message: m.message,
           messageType: m.messageType,
+          reactions: (m as { reactions?: any[] }).reactions || [],
           createdAt: (m as { createdAt?: Date }).createdAt,
         };
       }),
@@ -234,22 +237,176 @@ export class CommunicationService {
       senderId: new Types.ObjectId(userId),
       message,
       messageType: 'text',
+      reactions: [],
     });
     const sender = await this.userModel
       .findById(userId)
       .select('firstName lastName photo')
       .lean();
+
+    const senderName = sender
+      ? `${sender.firstName || ''} ${sender.lastName || ''}`.trim()
+      : 'User';
+
+    // Dispatch in-app notifications to other members in background
+    (async () => {
+      try {
+        const group = await this.chatGroupModel.findById(groupId).lean();
+        if (group) {
+          const recipientIds = new Set<string>();
+
+          // 1. Existing group members
+          if (Array.isArray(group.members)) {
+            group.members.forEach((m) => {
+              if (String(m) !== String(userId)) {
+                recipientIds.add(String(m));
+              }
+            });
+          }
+
+          // 2. All enrolled students in this batch or course
+          if (group.batch_id || group.course_id) {
+            const enrollFilter: Record<string, unknown> = {};
+            if (group.batch_id) {
+              enrollFilter.batch_id = group.batch_id;
+            } else if (group.course_id) {
+              enrollFilter.course_id = group.course_id;
+            }
+
+            const enrollments = await this.connection
+              .collection('batch_enrolled_students')
+              .find(enrollFilter)
+              .toArray();
+
+            enrollments.forEach((e) => {
+              if (e.student_id && String(e.student_id) !== String(userId)) {
+                recipientIds.add(String(e.student_id));
+              }
+            });
+          }
+
+          // 3. Course Instructor / Head Teacher / Batch Teacher
+          if (group.course_id) {
+            const course = await this.courseModel
+              .findById(group.course_id)
+              .select('instructor_id head_teacher batch')
+              .lean();
+
+            if (course) {
+              if (
+                course.instructor_id &&
+                String(course.instructor_id) !== String(userId)
+              ) {
+                recipientIds.add(String(course.instructor_id));
+              }
+              if (
+                course.head_teacher &&
+                String(course.head_teacher) !== String(userId)
+              ) {
+                recipientIds.add(String(course.head_teacher));
+              }
+              if (Array.isArray(course.batch) && group.batch_id) {
+                const batchObj = (course.batch as any[]).find(
+                  (b: any) => String(b._id) === String(group.batch_id),
+                );
+                if (
+                  batchObj &&
+                  batchObj.teacher &&
+                  String(batchObj.teacher) !== String(userId)
+                ) {
+                  recipientIds.add(String(batchObj.teacher));
+                }
+              }
+            }
+          }
+
+          // Also ensure all recipients are saved in group.members
+          if (recipientIds.size > 0) {
+            const memberObjIds = Array.from(recipientIds).map(
+              (id) => new Types.ObjectId(id),
+            );
+            await this.chatGroupModel.updateOne(
+              { _id: group._id },
+              { $addToSet: { members: { $each: memberObjIds } } },
+            );
+          }
+
+          const snippet =
+            message.length > 70 ? `${message.substring(0, 67)}...` : message;
+
+          await Promise.all(
+            Array.from(recipientIds).map((mId) =>
+              this.notificationService.createNotification({
+                recipient_id: mId,
+                sender_id: userId,
+                course_id: group.course_id || null,
+                batch_id: group.batch_id || null,
+                title: `New message from ${senderName}`,
+                message: snippet,
+                type: 'chat',
+                link: '/chat',
+              }),
+            ),
+          );
+        }
+      } catch (notifErr) {
+        console.warn('Failed to send in-app chat notifications:', notifErr);
+      }
+    })();
+
     return {
       _id: String(msg._id),
       groupId,
       senderId: userId,
-      senderName: sender
-        ? `${sender.firstName || ''} ${sender.lastName || ''}`.trim()
-        : 'User',
+      senderName,
       senderPhoto: (sender as { photo?: string })?.photo || null,
       message: msg.message,
       messageType: 'text',
+      reactions: [],
       createdAt: (msg as unknown as { createdAt?: Date }).createdAt || new Date(),
+    };
+  }
+
+  async addReaction(userId: string, messageId: string, emoji: string) {
+    const msg = await this.chatMessageModel.findById(messageId);
+    if (!msg) throw new NotFoundException('Message not found');
+
+    await this.assertMembership(userId, String(msg.groupId));
+
+    const reactions = msg.reactions || [];
+    const existingIndex = reactions.findIndex((r) => r.emoji === emoji);
+
+    if (existingIndex > -1) {
+      const reaction = reactions[existingIndex];
+      const userIndex = reaction.users.indexOf(String(userId));
+      if (userIndex > -1) {
+        // User already reacted with this emoji: remove (toggle off)
+        reaction.users.splice(userIndex, 1);
+        reaction.count = Math.max(0, reaction.count - 1);
+        if (reaction.count === 0 || reaction.users.length === 0) {
+          reactions.splice(existingIndex, 1);
+        }
+      } else {
+        // Add reaction
+        reaction.users.push(String(userId));
+        reaction.count += 1;
+      }
+    } else {
+      // First reaction with this emoji
+      reactions.push({
+        emoji,
+        count: 1,
+        users: [String(userId)],
+      });
+    }
+
+    msg.reactions = reactions;
+    await msg.save();
+
+    return {
+      messageId: String(msg._id),
+      groupId: String(msg.groupId),
+      reactions: msg.reactions,
     };
   }
 

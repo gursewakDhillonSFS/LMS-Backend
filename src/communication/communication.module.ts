@@ -8,6 +8,7 @@ import { ChatMessage, ChatMessageSchema } from './schemas/chat-message.schema';
 import { User, UserSchema } from '../user/schemas/user.schema';
 import { Course, CourseSchema } from '../course/schemas/course.schema';
 import { AuthModule } from '../auth/auth.module';
+import { NotificationModule } from '../notification/notification.module';
 
 @Module({
   imports: [
@@ -18,6 +19,7 @@ import { AuthModule } from '../auth/auth.module';
       { name: Course.name, schema: CourseSchema },
     ]),
     AuthModule,
+    NotificationModule,
   ],
   controllers: [CommunicationController],
   providers: [CommunicationService, CommunicationGateway],

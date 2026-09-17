@@ -98,6 +98,7 @@ export class NotificationService {
       unreadCount,
       totalCount: formattedList.length,
       data: {
+        notifications: formattedList,
         all: formattedList,
         new: newItems,
         today: todayItems,

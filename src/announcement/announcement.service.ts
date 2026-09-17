@@ -710,7 +710,7 @@ export class AnnouncementService {
   }
 
   // ─── Helper Formatter ─────────────────────────────────────────────────────
-  private async formatAnnouncement(ann: AnnouncementDocument) {
+  public async formatAnnouncement(ann: AnnouncementDocument) {
     const course = await this.courseModel
       .findById(ann.courseId)
       .select('course_name batch');

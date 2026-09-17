@@ -39,4 +39,16 @@ export class CommunicationController {
       dto.message,
     );
   }
+
+  @Post('reaction')
+  addReaction(
+    @Body() dto: { messageId: string; emoji: string },
+    @Req() req: AuthenticatedRequest,
+  ) {
+    return this.communicationService.addReaction(
+      req.user.userId,
+      dto.messageId,
+      dto.emoji,
+    );
+  }
 }

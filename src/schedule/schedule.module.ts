@@ -8,6 +8,8 @@ import {
   Announcement,
   AnnouncementSchema,
 } from '../announcement/schemas/announcement.schema';
+import { AnnouncementModule } from '../announcement/announcement.module';
+import { NotificationModule } from '../notification/notification.module';
 
 @Module({
   imports: [
@@ -16,6 +18,8 @@ import {
       { name: User.name, schema: UserSchema },
       { name: Announcement.name, schema: AnnouncementSchema },
     ]),
+    AnnouncementModule,
+    NotificationModule,
   ],
   controllers: [ScheduleController],
   providers: [ScheduleService],

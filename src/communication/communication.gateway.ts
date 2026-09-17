@@ -39,6 +39,26 @@ export class CommunicationGateway implements OnGatewayConnection {
       }
       const payload = this.jwtService.verify<{ sub: string }>(token);
       client.data.userId = payload.sub;
+      client.join(`user_${payload.sub}`);
+
+      // Automatically join client to all their chat group rooms
+      try {
+        const userRooms = await this.communicationService.getUserRooms(payload.sub);
+        if (Array.isArray(userRooms)) {
+          userRooms.forEach((r) => {
+            if (r._id) client.join(String(r._id));
+          });
+          this.logger.log(
+            `Chat client ${client.id} (user ${payload.sub}) auto-joined ${userRooms.length} rooms`,
+          );
+        }
+      } catch (joinErr) {
+        this.logger.warn(
+          `Failed to auto-join chat rooms for user ${payload.sub}:`,
+          joinErr,
+        );
+      }
+
       this.logger.log(`Chat client connected: ${client.id}`);
     } catch {
       client.disconnect(true);
@@ -82,6 +102,24 @@ export class CommunicationGateway implements OnGatewayConnection {
     );
     this.server.to(data.groupId).emit('newMessage', msg);
     return { event: 'sendMessage', status: 'success', data: msg };
+  }
+
+  @SubscribeMessage('addReaction')
+  async addReaction(
+    @ConnectedSocket() client: Socket,
+    @MessageBody() data: { messageId: string; emoji: string },
+  ) {
+    const userId = client.data.userId as string;
+    if (!userId || !data?.messageId || !data?.emoji) {
+      throw new WsException('Invalid reaction payload');
+    }
+    const result = await this.communicationService.addReaction(
+      userId,
+      data.messageId,
+      data.emoji,
+    );
+    this.server.to(result.groupId).emit('messageReaction', result);
+    return { event: 'addReaction', status: 'success', data: result };
   }
 
   @SubscribeMessage('typing')

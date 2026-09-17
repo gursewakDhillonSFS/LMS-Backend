@@ -473,6 +473,7 @@ export class AssignmentService {
         result: submission.result || '-',
         feedback: submission.feedback || null,
         status: submission.status,
+        dateOfSubmit: submission.dateOfSubmit || (submission as any).createdAt || null,
       }
     };
   }

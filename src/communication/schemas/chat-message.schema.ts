@@ -16,6 +16,22 @@ export class ChatMessage {
 
   @Prop({ type: String, default: 'text' })
   messageType: string;
+
+  @Prop({
+    type: [
+      {
+        emoji: { type: String, required: true },
+        count: { type: Number, default: 0 },
+        users: [{ type: String }],
+      },
+    ],
+    default: [],
+  })
+  reactions: {
+    emoji: string;
+    count: number;
+    users: string[];
+  }[];
 }
 
 export const ChatMessageSchema = SchemaFactory.createForClass(ChatMessage);

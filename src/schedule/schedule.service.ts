@@ -12,6 +12,9 @@ import {
   Announcement,
   AnnouncementDocument,
 } from '../announcement/schemas/announcement.schema';
+import { AnnouncementGateway } from '../announcement/announcement.gateway';
+import { AnnouncementService } from '../announcement/announcement.service';
+import { NotificationService } from '../notification/notification.service';
 import { CreateScheduleDto, UpdateScheduleDto } from './dto/schedule.dto';
 
 @Injectable()
@@ -21,6 +24,9 @@ export class ScheduleService {
     @InjectModel(User.name) private userModel: Model<UserDocument>,
     @InjectModel(Announcement.name)
     private announcementModel: Model<AnnouncementDocument>,
+    private readonly announcementGateway: AnnouncementGateway,
+    private readonly announcementService: AnnouncementService,
+    private readonly notificationService: NotificationService,
   ) {}
 
   private async checkTeacherScheduleAccess(
@@ -136,7 +142,7 @@ export class ScheduleService {
           day: 'numeric',
           year: 'numeric',
         });
-        await this.announcementModel.create({
+        const annDoc = await this.announcementModel.create({
           title: `Live Session Scheduled: ${dto.title}`,
           message: `A new live interactive class "${dto.title}" has been scheduled for ${formattedDate} from ${dto.startTime} to ${dto.endTime}. The join link will be active at session time!`,
           courseId: saved.courseId,
@@ -147,9 +153,48 @@ export class ScheduleService {
           type: 'general',
           referenceId: String(saved._id),
         });
+
+        // Broadcast real-time announcement popup
+        const formatted = await this.announcementService.formatAnnouncement(annDoc);
+        this.announcementGateway.broadcastNewAnnouncement(formatted);
+
+        // Notify enrolled students via in-app notifications
+        const enrollFilter: Record<string, unknown> = {
+          course_id: saved.courseId,
+        };
+        if (saved.batchId) {
+          enrollFilter.batch_id = new Types.ObjectId(saved.batchId);
+        }
+        const enrollments = await this.scheduleModel.db
+          .collection('batch_enrolled_students')
+          .find(enrollFilter)
+          .toArray();
+
+        const uniqueStudentIds = [
+          ...new Set(
+            enrollments
+              .map((e) => (e.student_id ? String(e.student_id) : ''))
+              .filter(Boolean),
+          ),
+        ];
+
+        await Promise.all(
+          uniqueStudentIds.map((sId) =>
+            this.notificationService.createNotification({
+              recipient_id: sId,
+              sender_id: userId,
+              course_id: saved.courseId,
+              batch_id: saved.batchId || null,
+              title: `Live Class Scheduled: ${dto.title}`,
+              message: `A new live interactive class has been scheduled for ${formattedDate} (${dto.startTime} - ${dto.endTime}).`,
+              type: 'schedule',
+              link: `/courses/${saved.courseId}`,
+            }),
+          ),
+        );
       } catch (annErr) {
         // Non-blocking log
-        console.error('Failed to create announcement for live class:', annErr);
+        console.error('Failed to broadcast announcement or notifications for live class:', annErr);
       }
     }
 
@@ -264,14 +309,58 @@ export class ScheduleService {
         ];
       }
     } else if (user.role === 'student') {
-      const studentBatchIds = user.batchIds ? user.batchIds.map(String) : [];
+      const enrollments = await this.scheduleModel.db
+        .collection('batch_enrolled_students')
+        .find({ student_id: new Types.ObjectId(userId) })
+        .toArray();
+
+      const enrolledCourseIds = [
+        ...new Set(
+          enrollments
+            .map((e) => (e.course_id ? String(e.course_id) : ''))
+            .filter(Boolean),
+        ),
+      ];
+      const enrolledBatchIds = [
+        ...new Set([
+          ...enrollments
+            .map((e) => (e.batch_id ? String(e.batch_id) : ''))
+            .filter(Boolean),
+          ...(user.batchIds ? user.batchIds.map(String) : []),
+        ]),
+      ];
+
       if (batchId) {
-        if (!studentBatchIds.includes(batchId)) {
+        if (!enrolledBatchIds.includes(batchId)) {
           throw new ForbiddenException('You do not have access to this batch');
         }
         query.batchId = batchId;
+      } else if (courseId) {
+        if (!enrolledCourseIds.includes(courseId)) {
+          throw new ForbiddenException('You do not have access to this course');
+        }
+        query.courseId = new Types.ObjectId(courseId);
+        query.$or = [
+          { batchId: { $in: enrolledBatchIds } },
+          { batchId: null },
+          { batchId: '' },
+        ];
       } else {
-        query.batchId = { $in: studentBatchIds };
+        query.$or = [
+          { batchId: { $in: enrolledBatchIds } },
+          {
+            courseId: {
+              $in: enrolledCourseIds.map((id) => new Types.ObjectId(id)),
+            },
+            batchId: null,
+          },
+          {
+            courseId: {
+              $in: enrolledCourseIds.map((id) => new Types.ObjectId(id)),
+            },
+            batchId: '',
+          },
+        ];
       }
     } else {
       if (courseId) {
