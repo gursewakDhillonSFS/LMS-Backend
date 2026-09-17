@@ -14,6 +14,8 @@ import {
 import { Schedule, ScheduleDocument } from '../schedule/schemas/schedule.schema';
 import { Course, CourseDocument } from '../course/schemas/course.schema';
 import { User, UserDocument } from '../user/schemas/user.schema';
+import { Announcement, AnnouncementDocument } from '../announcement/schemas/announcement.schema';
+import { NotificationService } from '../notification/notification.service';
 import {
   CreateQuizDto,
   UpdateQuizDto,
@@ -37,6 +39,11 @@ export class QuizService {
 
     @InjectModel(User.name)
     private userModel: Model<UserDocument>,
+
+    @InjectModel(Announcement.name)
+    private announcementModel: Model<AnnouncementDocument>,
+
+    private notificationService: NotificationService,
 
     @InjectConnection()
     private connection: Connection,
@@ -407,6 +414,21 @@ export class QuizService {
       { new: true },
     );
 
+    // Notify student
+    try {
+      await this.notificationService.createNotification({
+        recipient_id: submission.studentId,
+        course_id: quiz.courseId,
+        batch_id: quiz.batchId,
+        title: 'Quiz Graded',
+        message: `Your quiz "${quiz.quizName}" has been graded. Score: ${obtainedScore}/${submission.totalMarks || 100}`,
+        type: 'grade',
+        link: `/my-courses/course-details/quiz-result?quiz_id=${quiz._id}&course_id=${quiz.courseId}&batch_id=${quiz.batchId}`,
+      });
+    } catch {
+      // notification is best-effort
+    }
+
     return {
       status: true,
       message: 'Submission graded successfully',
@@ -505,6 +527,56 @@ export class QuizService {
       },
       { upsert: true, new: true },
     );
+
+    const student = await this.userModel.findById(studentId).lean();
+    const course = await this.courseModel.findById(quiz.courseId).lean();
+    const studentName = student
+      ? `${student.firstName || ''} ${student.lastName || ''}`.trim()
+      : 'A student';
+    const courseTitle = course?.course_name || 'Course';
+
+    // 1. Create announcement for course & batch
+    try {
+      const instructorId = course?.instructor_id || course?.head_teacher || new Types.ObjectId(studentId);
+      await this.announcementModel.create({
+        title: `New Quiz Submission: ${quiz.quizName}`,
+        message: `${studentName} has submitted "${quiz.quizName}" for ${courseTitle}. Score: ${obtainedScore}/${totalMarks}. Please review grading and feedback.`,
+        courseId: quiz.courseId,
+        batchId: quiz.batchId ? String(quiz.batchId) : null,
+        instructorId,
+        type: 'general',
+        referenceId: String(submission._id),
+        status: 'published',
+        publishedAt: new Date(),
+      });
+    } catch {
+      // announcement is best-effort
+    }
+
+    // 2. Create notification for Instructor & Teachers
+    try {
+      const recipients: string[] = [];
+      if (course?.instructor_id) recipients.push(String(course.instructor_id));
+      if (course?.head_teacher) recipients.push(String(course.head_teacher));
+      const batchObj = (course?.batch || []).find((b: any) => String(b._id) === String(quiz.batchId));
+      if (batchObj?.teacher) recipients.push(String(batchObj.teacher));
+
+      const uniqueRecipients = Array.from(new Set(recipients));
+      for (const recId of uniqueRecipients) {
+        await this.notificationService.createNotification({
+          recipient_id: recId,
+          sender_id: studentId,
+          course_id: quiz.courseId,
+          batch_id: quiz.batchId,
+          title: 'New Quiz Submission',
+          message: `${studentName} submitted quiz "${quiz.quizName}" for ${courseTitle} (Score: ${obtainedScore}/${totalMarks}).`,
+          type: 'submission',
+          link: `/quizzes/batch-details/test-details?quiz_id=${quiz._id}&course_id=${quiz.courseId}&batch_id=${quiz.batchId}`,
+        });
+      }
+    } catch {
+      // notification is best-effort
+    }
 
     // Update course progress
     try {

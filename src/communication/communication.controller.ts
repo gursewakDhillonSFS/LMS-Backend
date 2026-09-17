@@ -1,4 +1,4 @@
-import { Controller, Get, Param, Query, Req, UseGuards } from '@nestjs/common';
+import { Controller, Get, Post, Body, Param, Query, Req, UseGuards } from '@nestjs/common';
 import { CommunicationService } from './communication.service';
 import { JwtAuthGuard } from '../auth/jwt-auth.guard';
 import type { AuthenticatedRequest } from '../common/interfaces/auth-request.interface';
@@ -25,6 +25,18 @@ export class CommunicationController {
       groupId,
       Number(page),
       Number(limit),
+    );
+  }
+
+  @Post('send-message')
+  sendMessage(
+    @Body() dto: { groupId: string; message: string },
+    @Req() req: AuthenticatedRequest,
+  ) {
+    return this.communicationService.sendMessage(
+      req.user.userId,
+      dto.groupId,
+      dto.message,
     );
   }
 }

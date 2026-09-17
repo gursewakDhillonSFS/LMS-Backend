@@ -14,6 +14,8 @@ import {
 import { Course, CourseDocument } from '../course/schemas/course.schema';
 import { User, UserDocument } from '../user/schemas/user.schema';
 import { Schedule, ScheduleDocument } from '../schedule/schemas/schedule.schema';
+import { Announcement, AnnouncementDocument } from '../announcement/schemas/announcement.schema';
+import { NotificationService } from '../notification/notification.service';
 import {
   CreateAssignmentDto,
   UpdateAssignmentDto,
@@ -37,6 +39,11 @@ export class AssignmentService {
 
     @InjectModel(Schedule.name)
     private scheduleModel: Model<ScheduleDocument>,
+
+    @InjectModel(Announcement.name)
+    private announcementModel: Model<AnnouncementDocument>,
+
+    private notificationService: NotificationService,
 
     @InjectConnection()
     private connection: Connection,
@@ -423,6 +430,22 @@ export class AssignmentService {
       { new: true },
     );
 
+    // Notify student that assignment has been graded
+    try {
+      const assignment = await this.assignmentModel.findById(submission.assignmentId);
+      await this.notificationService.createNotification({
+        recipient_id: submission.studentId,
+        course_id: assignment?.courseId,
+        batch_id: assignment?.batchId,
+        title: 'Assignment Graded',
+        message: `Your assignment "${assignment?.assignmentName || 'Assignment'}" has been graded. Result: ${dto.result}`,
+        type: 'grade',
+        link: `/my-courses/course-details/assignment-details?assignment_id=${submission.assignmentId}`,
+      });
+    } catch {
+      // notification is best-effort
+    }
+
     return {
       status: true,
       message: 'Submission graded successfully',
@@ -504,6 +527,56 @@ export class AssignmentService {
       },
       { upsert: true, new: true },
     );
+
+    const student = await this.userModel.findById(studentId).lean();
+    const course = await this.courseModel.findById(assignment.courseId).lean();
+    const studentName = student
+      ? `${student.firstName || ''} ${student.lastName || ''}`.trim()
+      : 'A student';
+    const courseTitle = course?.course_name || 'Course';
+
+    // 1. Create announcement for course & batch
+    try {
+      const instructorId = course?.instructor_id || course?.head_teacher || new Types.ObjectId(studentId);
+      await this.announcementModel.create({
+        title: `New Assignment Submission: ${assignment.assignmentName}`,
+        message: `${studentName} has submitted "${assignment.assignmentName}" for ${courseTitle}. Please evaluate and grade the submission.`,
+        courseId: assignment.courseId,
+        batchId: assignment.batchId ? String(assignment.batchId) : null,
+        instructorId,
+        type: 'general',
+        referenceId: String(submission._id),
+        status: 'published',
+        publishedAt: new Date(),
+      });
+    } catch {
+      // announcement is best-effort
+    }
+
+    // 2. Create notification for Instructor & Teachers
+    try {
+      const recipients: string[] = [];
+      if (course?.instructor_id) recipients.push(String(course.instructor_id));
+      if (course?.head_teacher) recipients.push(String(course.head_teacher));
+      const batchObj = (course?.batch || []).find((b: any) => String(b._id) === String(assignment.batchId));
+      if (batchObj?.teacher) recipients.push(String(batchObj.teacher));
+
+      const uniqueRecipients = Array.from(new Set(recipients));
+      for (const recId of uniqueRecipients) {
+        await this.notificationService.createNotification({
+          recipient_id: recId,
+          sender_id: studentId,
+          course_id: assignment.courseId,
+          batch_id: assignment.batchId,
+          title: 'New Assignment Submission',
+          message: `${studentName} submitted "${assignment.assignmentName}" for ${courseTitle}.`,
+          type: 'submission',
+          link: `/assignments/batch-details/evaluate/${submission._id}?course_id=${assignment.courseId}&batch_id=${assignment.batchId}&assignment_id=${assignment._id}`,
+        });
+      }
+    } catch {
+      // notification is best-effort
+    }
 
     // Update progress
     try {

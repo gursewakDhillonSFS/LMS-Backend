@@ -19,6 +19,7 @@ import { CertificateModule } from './certificate/certificate.module';
 import { AdminModule } from './admin/admin.module';
 import { TranslationModule } from './translation/translation.module';
 import { RedisModule } from './redis/redis.module';
+import { NotificationModule } from './notification/notification.module';
 
 @Module({
   imports: [
@@ -42,6 +43,7 @@ import { RedisModule } from './redis/redis.module';
     AssignmentModule,
     QuizModule,
     AnnouncementModule,
+    NotificationModule,
     LmsScheduleModule,
     PaymentModule,
     CommunicationModule,

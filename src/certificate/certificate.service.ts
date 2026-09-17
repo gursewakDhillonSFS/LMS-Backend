@@ -19,6 +19,34 @@ export class CertificateService {
     @InjectConnection() private connection: Connection,
   ) {}
 
+  async issueCertificate(studentId: string, courseId: string) {
+    const existing = await this.certificateModel.findOne({
+      student_id: new Types.ObjectId(studentId),
+      course_id: new Types.ObjectId(courseId),
+    });
+    if (existing) {
+      return { status: true, message: 'Certificate already issued', data: existing };
+    }
+
+    const [course, user] = await Promise.all([
+      this.courseModel.findById(courseId).lean(),
+      this.userModel.findById(studentId).lean(),
+    ]);
+    if (!course) throw new NotFoundException('Course not found');
+    if (!user) throw new NotFoundException('Student not found');
+
+    const cert = await this.certificateModel.create({
+      student_id: new Types.ObjectId(studentId),
+      course_id: new Types.ObjectId(courseId),
+      course_name: course.course_name,
+      student_name: `${user.firstName || ''} ${user.lastName || ''}`.trim() || 'Learner',
+      issued_at: new Date(),
+      certificate_code: `SKILLBUILD-${randomBytes(4).toString('hex').toUpperCase()}`,
+    });
+
+    return { status: true, message: 'Certificate generated successfully', data: cert };
+  }
+
   async issueIfEligible(studentId: string, courseId: string, batchId: string) {
     const progress = await this.connection.collection('course_progress').findOne({
       student_id: new Types.ObjectId(studentId),

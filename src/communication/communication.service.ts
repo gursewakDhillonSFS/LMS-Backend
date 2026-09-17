@@ -3,14 +3,15 @@ import {
   Injectable,
   NotFoundException,
 } from '@nestjs/common';
-import { InjectModel } from '@nestjs/mongoose';
-import { Model, Types } from 'mongoose';
+import { InjectModel, InjectConnection } from '@nestjs/mongoose';
+import { Model, Types, Connection } from 'mongoose';
 import { ChatGroup, ChatGroupDocument } from './schemas/chat-group.schema';
 import {
   ChatMessage,
   ChatMessageDocument,
 } from './schemas/chat-message.schema';
 import { User, UserDocument } from '../user/schemas/user.schema';
+import { Course, CourseDocument } from '../course/schemas/course.schema';
 
 @Injectable()
 export class CommunicationService {
@@ -20,6 +21,8 @@ export class CommunicationService {
     @InjectModel(ChatMessage.name)
     private chatMessageModel: Model<ChatMessageDocument>,
     @InjectModel(User.name) private userModel: Model<UserDocument>,
+    @InjectModel(Course.name) private courseModel: Model<CourseDocument>,
+    @InjectConnection() private connection: Connection,
   ) {}
 
   async ensureGroupForBatch(
@@ -43,9 +46,7 @@ export class CommunicationService {
         { _id: group._id },
         {
           $addToSet: {
-            members: {
-              $each: memberIds.map((id) => new Types.ObjectId(id)),
-            },
+            members: { $each: memberIds.map((id) => new Types.ObjectId(id)) },
           },
         },
       );
@@ -54,14 +55,78 @@ export class CommunicationService {
     return group;
   }
 
-  async addMember(batchId: string, userId: string) {
+  async addMember(groupId: string, userId: string) {
     await this.chatGroupModel.updateOne(
-      { batch_id: new Types.ObjectId(batchId) },
+      { _id: new Types.ObjectId(groupId) },
       { $addToSet: { members: new Types.ObjectId(userId) } },
     );
   }
 
   async getUserRooms(userId: string) {
+    // 1. Auto-sync user's courses and batches into chat groups
+    try {
+      const user = await this.userModel.findById(userId).lean();
+      const userObjId = new Types.ObjectId(userId);
+
+      let courses: any[] = [];
+      if (user?.role === 'instructor') {
+        courses = await this.courseModel
+          .find({
+            $or: [
+              { instructor_id: userObjId },
+              ...(user.organisationId ? [{ organisation_id: user.organisationId }] : []),
+            ],
+          })
+          .lean();
+      } else if (user?.role === 'teacher') {
+        courses = await this.courseModel
+          .find({
+            $or: [
+              { instructor_id: userObjId },
+              { head_teacher: userObjId },
+              { 'batch.teacher': String(userId) },
+            ],
+          })
+          .lean();
+      }
+
+      // Also find courses where student is enrolled
+      const enrollments = await this.connection
+        .collection('batch_enrolled_students')
+        .find({ student_id: userObjId })
+        .toArray();
+
+      if (enrollments.length > 0) {
+        const enrolledCourseIds = enrollments.map((e) => e.course_id);
+        const enrolledCourses = await this.courseModel
+          .find({ _id: { $in: enrolledCourseIds } })
+          .lean();
+        courses = [...courses, ...enrolledCourses];
+      }
+
+      const courseMap = new Map();
+      for (const c of courses) {
+        courseMap.set(String(c._id), c);
+      }
+
+      for (const c of courseMap.values()) {
+        const batches = c.batch || [];
+        for (const b of batches) {
+          const batchName = b.batchName || 'Cohort';
+          const roomName = `${c.course_name} (${batchName})`;
+          await this.ensureGroupForBatch(
+            String(c._id),
+            String(b._id),
+            roomName,
+            [userId],
+          );
+        }
+      }
+    } catch {
+      // sync is best-effort
+    }
+
+    // 2. Fetch all groups where user is a member
     const groups = await this.chatGroupModel
       .find({ members: new Types.ObjectId(userId) })
       .sort({ updatedAt: -1 })
@@ -69,21 +134,34 @@ export class CommunicationService {
 
     const rooms = await Promise.all(
       groups.map(async (g) => {
-        const last = await this.chatMessageModel
-          .findOne({ groupId: g._id })
-          .sort({ createdAt: -1 })
-          .lean();
+        const [last, course, membersList] = await Promise.all([
+          this.chatMessageModel.findOne({ groupId: g._id }).sort({ createdAt: -1 }).lean(),
+          this.courseModel.findById(g.course_id).select('course_name course_image_url batch').lean(),
+          this.userModel.find({ _id: { $in: g.members } }).select('firstName lastName photo role').lean(),
+        ]);
+
+        const batchObj = (course?.batch || []).find((b: any) => String(b._id) === String(g.batch_id));
+
         return {
           _id: String(g._id),
+          name: g.name,
           names: g.name,
+          type: 'course',
+          courseTitle: course?.course_name || g.name,
+          batchName: batchObj?.batchName || 'Class Cohort',
           batch_id: String(g.batch_id),
           course_id: String(g.course_id),
-          avatar: null,
+          avatar: course?.course_image_url || null,
+          memberCount: g.members?.length || membersList.length || 1,
+          unreadCount: 0,
+          description: `Active discussion and collaboration room for ${course?.course_name || 'this course'}.`,
           lastMessage: last
             ? {
+                message: last.message || '',
+                senderName: '',
                 sender_id: String(last.senderId),
                 message_type: last.messageType,
-                message: last.message,
+                createdAt: (last as any).createdAt || new Date().toISOString(),
                 message_time: {
                   seconds: Math.floor(
                     new Date(
@@ -93,7 +171,13 @@ export class CommunicationService {
                 },
               }
             : null,
-          unread_count: {},
+          participants: membersList.map((m) => ({
+            id: String(m._id),
+            name: `${m.firstName || ''} ${m.lastName || ''}`.trim() || 'User',
+            role: m.role || 'student',
+            photo: (m as any).photo || null,
+            isOnline: true,
+          })),
         };
       }),
     );

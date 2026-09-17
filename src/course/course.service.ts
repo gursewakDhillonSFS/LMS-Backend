@@ -2558,9 +2558,34 @@ export class CourseService {
     }
     const reviews = await this.reviewModel
       .find({ course_id: new Types.ObjectId(courseId) })
+      .populate('user_id', 'firstName lastName photo')
       .sort({ createdAt: -1 })
       .lean();
-    return { status: true, data: reviews };
+
+    const reviewCount = reviews.length;
+    const totalRatingSum = reviews.reduce((sum, r) => sum + (r.rating || 0), 0);
+    const averageRating = reviewCount > 0 ? Number((totalRatingSum / reviewCount).toFixed(1)) : 5.0;
+
+    const formatted = reviews.map((r: any) => {
+      const user = r.user_id;
+      const userName = r.user_name || (user ? `${user.firstName || ''} ${user.lastName || ''}`.trim() : 'Verified Learner');
+      return {
+        _id: String(r._id),
+        course_id: String(r.course_id),
+        user_name: userName,
+        user_image: user?.photo || null,
+        rating: r.rating || 5,
+        review: r.review,
+        created_at: (r.createdAt || new Date()).toISOString(),
+      };
+    });
+
+    return {
+      status: true,
+      average_rating: averageRating,
+      review_count: reviewCount,
+      data: formatted,
+    };
   }
 
   async createCourseReview(userId: string, userName: string, courseId: string, rating: number, reviewText: string) {
