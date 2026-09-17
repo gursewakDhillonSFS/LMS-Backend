@@ -2088,10 +2088,58 @@ export class CourseService {
         studentId: new Types.ObjectId(userId),
       }).lean()) as any[];
 
+      const parseSubmissionScore = (
+        rawResult: any,
+        total: number = 100,
+      ): { score: number | null; totalMarks: number } => {
+        if (rawResult === null || rawResult === undefined || rawResult === '') {
+          return { score: null, totalMarks: total };
+        }
+        const str = String(rawResult).trim();
+        if (str.includes('/')) {
+          const parts = str.split('/');
+          const n = parseFloat(parts[0].trim());
+          const d = parseFloat(parts[1]?.trim() || '');
+          if (!isNaN(n)) {
+            return { score: n, totalMarks: !isNaN(d) && d > 0 ? d : total };
+          }
+        }
+        if (str.endsWith('%')) {
+          const n = parseFloat(str.replace('%', '').trim());
+          if (!isNaN(n)) {
+            return { score: n, totalMarks: total };
+          }
+        }
+        const n = parseFloat(str);
+        if (!isNaN(n)) {
+          return { score: n, totalMarks: total };
+        }
+        if (/^pass/i.test(str) || /^a\+?/i.test(str)) {
+          return { score: total, totalMarks: total };
+        }
+        return { score: null, totalMarks: total };
+      };
+
       assignmentsData = assignments.map((a) => {
         const sub = submissions.find(
           (s) => String(s.assignmentId) === String(a._id),
         );
+        const parsed = sub
+          ? parseSubmissionScore(sub.result, a.totalMarks || 100)
+          : { score: null, totalMarks: a.totalMarks || 100 };
+        const score =
+          parsed.score !== null
+            ? parsed.score
+            : sub?.obtainedScore !== undefined && sub?.obtainedScore !== null
+              ? Number(sub.obtainedScore)
+              : null;
+        const totalMarks = parsed.totalMarks || a.totalMarks || 100;
+        const status = sub
+          ? sub.status === 'Graded' || score !== null
+            ? 'Graded'
+            : sub.status || 'Submitted'
+          : 'Not Started';
+
         return {
           id: String(a._id),
           title: a.assignmentName,
@@ -2104,7 +2152,7 @@ export class CourseService {
                 year: 'numeric',
               })
             : 'No Due Date',
-          status: sub ? (sub.status || 'Submitted') : 'Not Started',
+          status,
           submittedDate: sub?.dateOfSubmit
             ? new Date(sub.dateOfSubmit).toLocaleDateString('en-US', {
                 day: 'numeric',
@@ -2112,11 +2160,8 @@ export class CourseService {
                 year: 'numeric',
               })
             : null,
-          score:
-            sub?.result !== undefined && sub?.result !== null
-              ? Number(sub.result)
-              : sub?.obtainedScore ?? null,
-          totalMarks: a.totalMarks || 100,
+          score,
+          totalMarks,
           feedback: sub?.feedback || null,
         };
       });
@@ -2139,13 +2184,24 @@ export class CourseService {
         const sub = quizSubmissions.find(
           (s) => String(s.quizId) === String(q._id),
         );
+        const score =
+          sub?.obtainedScore !== undefined && sub?.obtainedScore !== null
+            ? Number(sub.obtainedScore)
+            : null;
+        const totalMarks = sub?.totalMarks || q.totalMarks || 100;
+        const status = sub
+          ? sub.status === 'Graded' || score !== null
+            ? 'Graded'
+            : sub.status || 'Completed'
+          : 'Not Started';
+
         return {
           id: String(q._id),
           title: q.quizName,
           type: 'Quiz',
           tags: q.quizType === 'mcq' ? ['MCQ'] : ['Mixed'],
           description: q.overview,
-          status: sub ? (sub.status || 'Completed') : 'Not Started',
+          status,
           dueDate: q.dueDate
             ? new Date(q.dueDate).toLocaleDateString('en-US', {
                 day: 'numeric',
@@ -2160,8 +2216,8 @@ export class CourseService {
                 year: 'numeric',
               })
             : null,
-          score: sub?.obtainedScore !== undefined ? sub.obtainedScore : null,
-          totalMarks: sub?.totalMarks || q.totalMarks || 100,
+          score,
+          totalMarks,
           feedback: sub?.feedback || null,
         };
       });
@@ -2193,6 +2249,45 @@ export class CourseService {
     const averageScore =
       gradedCount > 0 ? Math.round(totalScoreSum / gradedCount) : 0;
     const isPassed = totalCompleted > 0 && averageScore >= 50;
+    const certificateEligible =
+      isPassed &&
+      (totalItems === 0 || totalCompleted / Math.max(1, totalItems) >= 0.7);
+
+    // Auto issue certificate if eligible
+    let certificateCode = `CERT-${courseId ? courseId.slice(-6).toUpperCase() : 'SKILL992'}`;
+    if (certificateEligible && courseId) {
+      try {
+        const certCol = this.connection.collection('certificates');
+        const existingCert = await certCol.findOne({
+          student_id: new Types.ObjectId(userId),
+          course_id: new Types.ObjectId(courseId),
+        });
+        if (existingCert) {
+          certificateCode = existingCert.certificate_code || certificateCode;
+        } else {
+          const [courseDoc, userDoc] = await Promise.all([
+            this.courseModel.findById(courseId).lean(),
+            this.userModel.findById(userId).lean(),
+          ]);
+          if (courseDoc && userDoc) {
+            const newCode = `SKILLBUILD-${Math.random().toString(36).substring(2, 8).toUpperCase()}`;
+            await certCol.insertOne({
+              student_id: new Types.ObjectId(userId),
+              course_id: new Types.ObjectId(courseId),
+              course_name: courseDoc.course_name,
+              student_name: `${userDoc.firstName || ''} ${userDoc.lastName || ''}`.trim() || 'Learner',
+              issued_at: new Date(),
+              certificate_code: newCode,
+              createdAt: new Date(),
+              updatedAt: new Date(),
+            });
+            certificateCode = newCode;
+          }
+        }
+      } catch {
+        // certificate creation is non-blocking
+      }
+    }
 
     return {
       status: true,
@@ -2205,14 +2300,13 @@ export class CourseService {
           gradedCount,
           averageScore,
           isPassed,
+          certificateCode,
           resultRemark: isPassed
             ? 'Pass'
             : totalCompleted === 0
               ? 'Not Started'
               : 'Needs Improvement',
-          certificateEligible:
-            isPassed &&
-            totalCompleted / Math.max(1, totalItems) >= 0.7,
+          certificateEligible,
         },
       },
     };

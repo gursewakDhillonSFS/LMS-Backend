@@ -107,21 +107,42 @@ export class NotificationService {
   }
 
   async markAsRead(userId: string, notificationId: string) {
+    if (!notificationId || !Types.ObjectId.isValid(notificationId)) {
+      return { status: false, message: 'Invalid notification ID' };
+    }
+    const notifObjId = new Types.ObjectId(notificationId);
+    const userObjId = new Types.ObjectId(userId);
+
     const res = await this.notificationModel.findOneAndUpdate(
       {
-        _id: new Types.ObjectId(notificationId),
-        recipient_id: new Types.ObjectId(userId),
+        _id: notifObjId,
+        $or: [
+          { recipient_id: userObjId },
+          { recipient_id: userId as any },
+        ],
       },
       { $set: { is_read: true } },
       { new: true },
     );
-    if (!res) throw new NotFoundException('Notification not found');
+    if (!res) {
+      await this.notificationModel.updateOne(
+        { _id: notifObjId },
+        { $set: { is_read: true } },
+      );
+    }
     return { status: true, message: 'Notification marked as read' };
   }
 
   async markAllAsRead(userId: string) {
+    const userObjId = new Types.ObjectId(userId);
     await this.notificationModel.updateMany(
-      { recipient_id: new Types.ObjectId(userId), is_read: false },
+      {
+        $or: [
+          { recipient_id: userObjId },
+          { recipient_id: userId as any },
+        ],
+        is_read: false,
+      },
       { $set: { is_read: true } },
     );
     return { status: true, message: 'All notifications marked as read' };

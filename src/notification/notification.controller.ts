@@ -3,6 +3,7 @@ import {
   Get,
   Patch,
   Put,
+  Post,
   Param,
   Query,
   Req,
@@ -28,6 +29,7 @@ export class NotificationController {
 
   @Patch('mark-read/:id')
   @Put('mark-read/:id')
+  @Post('mark-read/:id')
   async markRead(
     @Param('id') id: string,
     @Req() req: AuthenticatedRequest,
@@ -37,6 +39,7 @@ export class NotificationController {
 
   @Patch('mark-all-read')
   @Put('mark-all-read')
+  @Post('mark-all-read')
   async markAllRead(@Req() req: AuthenticatedRequest) {
     return this.notificationService.markAllAsRead(req.user.userId);
   }

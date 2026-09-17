@@ -7,7 +7,7 @@ import {
 import { InjectModel } from '@nestjs/mongoose';
 import { Model, Types } from 'mongoose';
 import { Schedule, ScheduleDocument } from './schemas/schedule.schema';
-import { User, UserDocument } from '../user/schemas/user.schema';
+import { User, UserDocument, UserRole } from '../user/schemas/user.schema';
 import {
   Announcement,
   AnnouncementDocument,
@@ -308,10 +308,19 @@ export class ScheduleService {
           { batchId: { $in: allowedBatchIds } },
         ];
       }
-    } else if (user.role === 'student') {
+    } else if (
+      user.role === UserRole.STUDENT ||
+      (user.role as string) === 'student' ||
+      (user.role as string) === 'user'
+    ) {
       const enrollments = await this.scheduleModel.db
         .collection('batch_enrolled_students')
-        .find({ student_id: new Types.ObjectId(userId) })
+        .find({
+          $or: [
+            { student_id: new Types.ObjectId(userId) },
+            { student_id: userId as any },
+          ],
+        })
         .toArray();
 
       const enrolledCourseIds = [
@@ -331,14 +340,15 @@ export class ScheduleService {
       ];
 
       if (batchId) {
-        if (!enrolledBatchIds.includes(batchId)) {
-          throw new ForbiddenException('You do not have access to this batch');
+        if (courseId) {
+          query.courseId = new Types.ObjectId(courseId);
         }
-        query.batchId = batchId;
+        query.$or = [
+          { batchId: batchId },
+          { batchId: null },
+          { batchId: '' },
+        ];
       } else if (courseId) {
-        if (!enrolledCourseIds.includes(courseId)) {
-          throw new ForbiddenException('You do not have access to this course');
-        }
         query.courseId = new Types.ObjectId(courseId);
         query.$or = [
           { batchId: { $in: enrolledBatchIds } },
@@ -367,7 +377,11 @@ export class ScheduleService {
         query.courseId = new Types.ObjectId(courseId);
       }
       if (batchId) {
-        query.batchId = batchId;
+        query.$or = [
+          { batchId: batchId },
+          { batchId: null },
+          { batchId: '' },
+        ];
       }
     }
 
