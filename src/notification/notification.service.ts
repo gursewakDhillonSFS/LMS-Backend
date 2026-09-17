@@ -39,10 +39,14 @@ export class NotificationService {
     });
   }
 
-  async getUserNotifications(userId: string) {
+  async getUserNotifications(userId: string, unreadOnly = false) {
     const userObjId = new Types.ObjectId(userId);
+    const filter: Record<string, any> = { recipient_id: userObjId };
+    if (unreadOnly) {
+      filter.is_read = false;
+    }
     const notifications = await this.notificationModel
-      .find({ recipient_id: userObjId })
+      .find(filter)
       .populate('sender_id', 'firstName lastName photo')
       .populate('course_id', 'course_name')
       .sort({ createdAt: -1 })

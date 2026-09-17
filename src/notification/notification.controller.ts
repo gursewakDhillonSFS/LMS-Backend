@@ -2,7 +2,9 @@ import {
   Controller,
   Get,
   Patch,
+  Put,
   Param,
+  Query,
   Req,
   UseGuards,
 } from '@nestjs/common';
@@ -11,16 +13,21 @@ import { JwtAuthGuard } from '../auth/jwt-auth.guard';
 import type { AuthenticatedRequest } from '../common/interfaces/auth-request.interface';
 
 @UseGuards(JwtAuthGuard)
-@Controller('auth/notification/v1')
+@Controller(['auth/notification/v1', 'auth/notifications/v1'])
 export class NotificationController {
   constructor(private readonly notificationService: NotificationService) {}
 
   @Get('my-notifications')
-  async getMyNotifications(@Req() req: AuthenticatedRequest) {
-    return this.notificationService.getUserNotifications(req.user.userId);
+  async getMyNotifications(
+    @Req() req: AuthenticatedRequest,
+    @Query('unreadOnly') unreadOnly?: string,
+  ) {
+    const isUnread = unreadOnly === 'true';
+    return this.notificationService.getUserNotifications(req.user.userId, isUnread);
   }
 
   @Patch('mark-read/:id')
+  @Put('mark-read/:id')
   async markRead(
     @Param('id') id: string,
     @Req() req: AuthenticatedRequest,
@@ -29,6 +36,7 @@ export class NotificationController {
   }
 
   @Patch('mark-all-read')
+  @Put('mark-all-read')
   async markAllRead(@Req() req: AuthenticatedRequest) {
     return this.notificationService.markAllAsRead(req.user.userId);
   }
