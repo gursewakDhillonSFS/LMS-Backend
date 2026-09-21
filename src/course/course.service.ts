@@ -835,12 +835,25 @@ export class CourseService {
       this.courseModel.countDocuments(filter),
     ]);
 
-    // Check user enrollments
+    // Check user enrollments and favorites
     const enrolledCourseIds = new Set<string>();
+    const favoriteCourseIds = new Set<string>();
     if (callingUser) {
-      const enrollments = await this.connection.collection('batch_enrolled_students').find({ student_id: new Types.ObjectId(callingUser._id) }).toArray();
+      const [enrollments, likes] = await Promise.all([
+        this.connection
+          .collection('batch_enrolled_students')
+          .find({ student_id: new Types.ObjectId(callingUser._id) })
+          .toArray(),
+        this.connection
+          .collection('likes')
+          .find({ student_id: new Types.ObjectId(callingUser._id) })
+          .toArray(),
+      ]);
       for (const e of enrollments) {
         enrolledCourseIds.add(e.course_id.toString());
+      }
+      for (const l of likes) {
+        favoriteCourseIds.add(l.course_id.toString());
       }
     }
 
@@ -904,6 +917,8 @@ export class CourseService {
             (headTeacher as unknown as { photo?: string })?.photo ?? null,
           created_at: (c as unknown as { createdAt: Date }).createdAt,
           enrolled_status: enrolledCourseIds.has(c._id.toString()),
+          favorite: favoriteCourseIds.has(c._id.toString()),
+          favorite_status: favoriteCourseIds.has(c._id.toString()),
           batch: (c.batch || [])
             .filter((b) => {
               if (callingUser && String(callingUser.role) === 'teacher' && callingUser.teacherId) {
@@ -2246,12 +2261,39 @@ export class CourseService {
       }
     });
 
-    const averageScore =
+    let courseProgressPercent = 0;
+    if (courseId) {
+      try {
+        const progDoc = await this.connection.collection('course_progress').findOne({
+          student_id: new Types.ObjectId(userId),
+          course_id: new Types.ObjectId(courseId),
+        });
+        courseProgressPercent = progDoc?.progress_percent || 0;
+        if (progDoc?.is_completed) courseProgressPercent = 100;
+      } catch {
+        // ignore
+      }
+    }
+
+    const isCourseFinished = courseProgressPercent >= 100;
+
+    let averageScore =
       gradedCount > 0 ? Math.round(totalScoreSum / gradedCount) : 0;
-    const isPassed = totalCompleted > 0 && averageScore >= 50;
-    const certificateEligible =
-      isPassed &&
-      (totalItems === 0 || totalCompleted / Math.max(1, totalItems) >= 0.7);
+    let isPassed = false;
+    let certificateEligible = false;
+
+    if (totalItems === 0) {
+      if (isCourseFinished) {
+        isPassed = true;
+        averageScore = 100;
+        certificateEligible = true;
+      }
+    } else {
+      isPassed = (totalCompleted > 0 && averageScore >= 50) || isCourseFinished;
+      certificateEligible =
+        isPassed &&
+        (totalCompleted / Math.max(1, totalItems) >= 0.7 || isCourseFinished);
+    }
 
     // Auto issue certificate if eligible
     let certificateCode = `CERT-${courseId ? courseId.slice(-6).toUpperCase() : 'SKILL992'}`;

@@ -28,9 +28,23 @@ export class NotificationController {
   }
 
   @Patch('mark-read/:id')
+  async markReadPatch(
+    @Param('id') id: string,
+    @Req() req: AuthenticatedRequest,
+  ) {
+    return this.notificationService.markAsRead(req.user.userId, id);
+  }
+
   @Put('mark-read/:id')
+  async markReadPut(
+    @Param('id') id: string,
+    @Req() req: AuthenticatedRequest,
+  ) {
+    return this.notificationService.markAsRead(req.user.userId, id);
+  }
+
   @Post('mark-read/:id')
-  async markRead(
+  async markReadPost(
     @Param('id') id: string,
     @Req() req: AuthenticatedRequest,
   ) {
@@ -38,9 +52,17 @@ export class NotificationController {
   }
 
   @Patch('mark-all-read')
+  async markAllReadPatch(@Req() req: AuthenticatedRequest) {
+    return this.notificationService.markAllAsRead(req.user.userId);
+  }
+
   @Put('mark-all-read')
+  async markAllReadPut(@Req() req: AuthenticatedRequest) {
+    return this.notificationService.markAllAsRead(req.user.userId);
+  }
+
   @Post('mark-all-read')
-  async markAllRead(@Req() req: AuthenticatedRequest) {
+  async markAllReadPost(@Req() req: AuthenticatedRequest) {
     return this.notificationService.markAllAsRead(req.user.userId);
   }
 }
