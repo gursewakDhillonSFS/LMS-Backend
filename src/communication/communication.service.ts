@@ -92,36 +92,84 @@ export class CommunicationService {
           .lean();
       }
 
-      // Also find courses where student is enrolled
-      const enrollments = await this.connection
-        .collection('batch_enrolled_students')
-        .find({ student_id: userObjId })
-        .toArray();
+      if (user?.role === 'student') {
+        // Students are ONLY enrolled into the specific batch they purchased/joined
+        const enrollments = await this.connection
+          .collection('batch_enrolled_students')
+          .find({ student_id: userObjId })
+          .toArray();
 
-      if (enrollments.length > 0) {
-        const enrolledCourseIds = enrollments.map((e) => e.course_id);
-        const enrolledCourses = await this.courseModel
-          .find({ _id: { $in: enrolledCourseIds } })
-          .lean();
-        courses = [...courses, ...enrolledCourses];
-      }
+        const enrolledBatchObjIds = enrollments
+          .map((e) => (e.batch_id ? new Types.ObjectId(e.batch_id) : null))
+          .filter(Boolean) as Types.ObjectId[];
+        const enrolledCourseObjIds = enrollments
+          .map((e) => (e.course_id ? new Types.ObjectId(e.course_id) : null))
+          .filter(Boolean) as Types.ObjectId[];
 
-      const courseMap = new Map();
-      for (const c of courses) {
-        courseMap.set(String(c._id), c);
-      }
+        if (enrollments.length > 0) {
+          const enrolledCourses = await this.courseModel
+            .find({ _id: { $in: enrolledCourseObjIds } })
+            .lean();
+          const courseMap = new Map<string, any>();
+          enrolledCourses.forEach((c) => courseMap.set(String(c._id), c));
 
-      for (const c of courseMap.values()) {
-        const batches = c.batch || [];
-        for (const b of batches) {
-          const batchName = b.batchName || 'Cohort';
-          const roomName = `${c.course_name} (${batchName})`;
-          await this.ensureGroupForBatch(
-            String(c._id),
-            String(b._id),
-            roomName,
-            [userId],
-          );
+          for (const e of enrollments) {
+            if (!e.course_id || !e.batch_id) continue;
+            const c = courseMap.get(String(e.course_id));
+            const batchObj = (c?.batch || []).find(
+              (b: any) => String(b._id) === String(e.batch_id),
+            );
+            const batchName = batchObj?.batchName || 'Cohort';
+            const roomName = `${c?.course_name || 'Course'} (${batchName})`;
+            await this.ensureGroupForBatch(
+              String(e.course_id),
+              String(e.batch_id),
+              roomName,
+              [userId],
+            );
+          }
+
+          // Clean up: remove student from any other batch chat rooms in these courses they are NOT enrolled in
+          if (enrolledCourseObjIds.length > 0 && enrolledBatchObjIds.length > 0) {
+            await this.chatGroupModel.updateMany(
+              {
+                course_id: { $in: enrolledCourseObjIds },
+                batch_id: { $nin: enrolledBatchObjIds },
+                members: userObjId,
+              },
+              { $pull: { members: userObjId } },
+            );
+          }
+        }
+      } else {
+        // Instructors / Teachers manage their relevant courses and batches
+        const courseMap = new Map();
+        for (const c of courses) {
+          courseMap.set(String(c._id), c);
+        }
+
+        for (const c of courseMap.values()) {
+          const batches = c.batch || [];
+          for (const b of batches) {
+            // For teachers, only join batches they are assigned to (or all if head/creator)
+            if (
+              user?.role === 'teacher' &&
+              b.teacher &&
+              String(b.teacher) !== String(userId) &&
+              String(c.instructor_id) !== String(userId) &&
+              String(c.head_teacher) !== String(userId)
+            ) {
+              continue;
+            }
+            const batchName = b.batchName || 'Cohort';
+            const roomName = `${c.course_name} (${batchName})`;
+            await this.ensureGroupForBatch(
+              String(c._id),
+              String(b._id),
+              roomName,
+              [userId],
+            );
+          }
         }
       }
     } catch {

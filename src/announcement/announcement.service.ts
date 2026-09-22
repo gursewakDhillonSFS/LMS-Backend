@@ -464,34 +464,32 @@ export class AnnouncementService {
       return orConditions.length > 0 ? { $or: orConditions } : { _id: null };
     }
 
-    // Student: find courses and batches from batch_enrolled_students + dbUser.batchIds
+    // Student: find courses and batches from batch_enrolled_students
     const enrollments = await this.connection
       .collection('batch_enrolled_students')
       .find({ student_id: new Types.ObjectId(userId) })
       .toArray();
 
-    const courseBatchMap = new Map<string, Set<string>>();
-    enrollments.forEach((e) => {
-      if (e.course_id) {
-        const cId = String(e.course_id);
-        if (!courseBatchMap.has(cId)) courseBatchMap.set(cId, new Set());
-        if (e.batch_id) courseBatchMap.get(cId)!.add(String(e.batch_id));
-      }
-    });
+    if (enrollments.length === 0) {
+      return { _id: null };
+    }
 
     const orConditions: Record<string, unknown>[] = [];
-    courseBatchMap.forEach((batchSet, courseId) => {
-      orConditions.push({
-        courseId: new Types.ObjectId(courseId),
-        batchId: { $in: [null, '', ...Array.from(batchSet)] },
-      });
-    });
+    enrollments.forEach((e) => {
+      if (e.course_id) {
+        // Only receive announcements created on or after the student's enrollment date/time
+        const enrolledAt = e.createdAt || e.enrolled_at || new Date(0);
+        const batchFilter = e.batch_id
+          ? { $in: [null, '', String(e.batch_id), new Types.ObjectId(e.batch_id)] }
+          : { $in: [null, ''] };
 
-    if (dbUser.batchIds && dbUser.batchIds.length > 0) {
-      orConditions.push({
-        batchId: { $in: dbUser.batchIds.map((id) => String(id)) },
-      });
-    }
+        orConditions.push({
+          courseId: new Types.ObjectId(e.course_id),
+          batchId: batchFilter,
+          createdAt: { $gte: new Date(enrolledAt) },
+        });
+      }
+    });
 
     return orConditions.length > 0 ? { $or: orConditions } : { _id: null };
   }

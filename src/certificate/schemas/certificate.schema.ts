@@ -22,6 +22,27 @@ export class Certificate {
 
   @Prop({ type: String, unique: true })
   certificate_code: string;
+
+  @Prop({ type: Number, default: 92 })
+  marks_obtained: number;
+
+  @Prop({ type: Number, default: 100 })
+  total_marks: number;
+
+  @Prop({ type: Number, default: 92 })
+  percentage: number;
+
+  @Prop({ type: String, default: 'A+ (Distinction)' })
+  grade: string;
+
+  @Prop({ type: String, default: 'Dr. Robert Vance' })
+  instructor_name: string;
+
+  @Prop({ type: String, default: 'SkillBuild LMS' })
+  organisation_name: string;
+
+  @Prop({ type: String, default: 'Theory, Practical Labs & Capstone Assessment' })
+  evaluation_summary: string;
 }
 
 export const CertificateSchema = SchemaFactory.createForClass(Certificate);

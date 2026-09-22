@@ -18,6 +18,13 @@ export class PurchaseCourseDto {
   @IsOptional()
   @IsString()
   batch_id?: string;
+
+  @IsOptional()
+  use_saved_payment_method?: boolean;
+
+  @IsOptional()
+  @IsString()
+  payment_method_id?: string;
 }
 
 /**

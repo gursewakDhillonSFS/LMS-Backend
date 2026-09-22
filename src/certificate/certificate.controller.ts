@@ -3,7 +3,7 @@ import { CertificateService } from './certificate.service';
 import { JwtAuthGuard } from '../auth/jwt-auth.guard';
 import type { AuthenticatedRequest } from '../common/interfaces/auth-request.interface';
 
-@Controller('certificate/v1')
+@Controller(['certificate/v1', 'auth/certificate/v1'])
 export class CertificateController {
   constructor(private readonly certificateService: CertificateService) {}
 

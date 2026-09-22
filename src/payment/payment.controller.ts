@@ -56,6 +56,12 @@ export class PaymentController {
   }
 
   @UseGuards(JwtAuthGuard)
+  @Get('payment/saved-method')
+  getSavedPaymentMethod(@Req() req: AuthenticatedRequest) {
+    return this.paymentService.getSavedPaymentMethod(req.user.userId);
+  }
+
+  @UseGuards(JwtAuthGuard)
   @Get('purchase/:courseId/access')
   checkPurchaseAccess(
     @Param('courseId') courseId: string,

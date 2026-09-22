@@ -33,6 +33,7 @@ import {
   OrganisationDocument,
 } from '../organisation/schemas/organisation.schema';
 import { Teacher, TeacherDocument } from '../teacher/schemas/teacher.schema';
+import { User, UserDocument } from '../user/schemas/user.schema';
 import { PurchaseCourseDto, RefundPurchaseDto } from './dto/payment.dto';
 
 @Injectable()
@@ -57,6 +58,7 @@ export class PaymentService {
     @InjectModel(Organisation.name)
     private orgModel: Model<OrganisationDocument>,
     @InjectModel(Teacher.name) private teacherModel: Model<TeacherDocument>,
+    @InjectModel(User.name) private userModel: Model<UserDocument>,
     private readonly courseService: CourseService,
   ) {
     const key = this.config.get<string>('STRIPE_SECRET_KEY');
@@ -123,6 +125,11 @@ export class PaymentService {
     // Resolve batch teacher
     let batchId: Types.ObjectId | null = null;
     let teacherId: Types.ObjectId | null = null;
+
+    // Enforce batch selection if course has multiple batches
+    if (course.batch && course.batch.length > 1 && !dto.batch_id) {
+      throw new BadRequestException('Please select a batch to enroll in this course');
+    }
 
     if (dto.batch_id) {
       batchId = new Types.ObjectId(dto.batch_id);
@@ -211,9 +218,26 @@ export class PaymentService {
       };
     }
 
-    // ── Paid course — create Stripe Checkout ────────────────────────────────
-    const frontendUrl =
-      this.config.get<string>('FRONTEND_URL') || 'http://localhost:3000';
+    // ── Paid course ──────────────────────────────────────────────────────────
+    const user = await this.userModel.findById(userId);
+    if (!user) throw new NotFoundException('User not found');
+
+    // Ensure Stripe customer ID exists
+    let stripeCustomerId = user.stripeCustomerId;
+    if (!stripeCustomerId) {
+      try {
+        const customer = await this.getStripe().customers.create({
+          email: user.email,
+          name: `${user.firstName || ''} ${user.lastName || ''}`.trim() || undefined,
+          metadata: { userId },
+        });
+        stripeCustomerId = customer.id;
+        user.stripeCustomerId = stripeCustomerId;
+        await user.save();
+      } catch (err) {
+        this.logger.warn(`Could not create Stripe customer for user ${userId}`, err);
+      }
+    }
 
     const purchase = await this.purchaseModel.create({
       studentId: new Types.ObjectId(userId),
@@ -227,10 +251,89 @@ export class PaymentService {
       organisationShareCents: orgShareCents,
       teacherShareCents: teacherShareCents,
       teacherRevenuePercent: teacherPercent,
+      stripeCustomerId: stripeCustomerId || null,
       status: 'pending',
     });
 
-    const session = await this.getStripe().checkout.sessions.create({
+    // ── Option A: Direct Payment with Saved Payment Method ───────────────────
+    if (dto.use_saved_payment_method && stripeCustomerId) {
+      try {
+        const paymentMethods = await this.getStripe().paymentMethods.list({
+          customer: stripeCustomerId,
+          type: 'card',
+        });
+
+        if (!paymentMethods.data || paymentMethods.data.length === 0) {
+          throw new BadRequestException('No saved payment method found. Please pay via Checkout.');
+        }
+
+        const pmId = dto.payment_method_id || paymentMethods.data[0].id;
+
+        const paymentIntent = await this.getStripe().paymentIntents.create({
+          amount: grossCents,
+          currency: 'usd',
+          customer: stripeCustomerId,
+          payment_method: pmId,
+          off_session: true,
+          confirm: true,
+          metadata: {
+            purchaseId: String(purchase._id),
+            userId,
+            courseId,
+            type: 'course_purchase',
+          },
+        });
+
+        if (paymentIntent.status === 'succeeded') {
+          await this.courseService.purchaseCourses(
+            userId,
+            [courseId],
+            batchId ? [batchId.toString()] : [],
+          );
+
+          const now = new Date();
+          purchase.status = 'paid';
+          purchase.purchasedAt = now;
+          purchase.stripePaymentIntentId = paymentIntent.id;
+          purchase.refundDeadline = new Date(
+            now.getTime() + this.refundWindowDays * 24 * 60 * 60 * 1000,
+          );
+          await purchase.save();
+
+          await this.finDocModel.create({
+            type: 'student_purchase',
+            referenceId: purchase._id,
+            ownerId: new Types.ObjectId(userId),
+            ownerType: 'student',
+            amountCents: grossCents,
+            description: `Course purchase (Saved Card): ${course.course_name || 'Course'}`,
+            metadata: { courseId, courseName: course.course_name },
+          });
+
+          return {
+            status: true,
+            message: 'Course purchased successfully with saved payment method',
+            data: {
+              directSuccess: true,
+              enrolled: true,
+              purchaseId: String(purchase._id),
+            },
+          };
+        }
+      } catch (err: any) {
+        this.logger.warn(`Failed to charge saved card for user ${userId}, falling back to checkout session`, err);
+        // If it was an explicit failure, return the message
+        if (err?.statusCode === 400 || err instanceof BadRequestException) {
+          throw err;
+        }
+      }
+    }
+
+    // ── Option B: Create Stripe Checkout Session (New Card / Fallback) ──────
+    const frontendUrl =
+      this.config.get<string>('FRONTEND_URL') || 'http://localhost:3000';
+
+    const sessionParams: Stripe.Checkout.SessionCreateParams = {
       mode: 'payment',
       line_items: [
         {
@@ -256,7 +359,20 @@ export class PaymentService {
         type: 'course_purchase',
       },
       client_reference_id: String(purchase._id),
-    });
+      payment_intent_data: {
+        setup_future_usage: 'off_session',
+      },
+      saved_payment_method_options: {
+        payment_method_save: 'enabled',
+      },
+    };
+
+    if (stripeCustomerId) {
+      sessionParams.customer = stripeCustomerId;
+      sessionParams.customer_update = { address: 'auto' };
+    }
+
+    const session = await this.getStripe().checkout.sessions.create(sessionParams);
 
     purchase.stripeCheckoutSessionId = session.id;
     await purchase.save();
@@ -272,6 +388,43 @@ export class PaymentService {
         purchaseId: String(purchase._id),
       },
     };
+  }
+
+  // ─────────────────────────────────────────────────────────────────────────────
+  // SAVED PAYMENT METHODS
+  // ─────────────────────────────────────────────────────────────────────────────
+
+  async getSavedPaymentMethod(userId: string) {
+    const user = await this.userModel.findById(userId).lean();
+    if (!user || !user.stripeCustomerId) {
+      return { status: true, data: { hasSavedMethod: false } };
+    }
+
+    try {
+      const paymentMethods = await this.getStripe().paymentMethods.list({
+        customer: user.stripeCustomerId,
+        type: 'card',
+      });
+
+      if (paymentMethods.data && paymentMethods.data.length > 0) {
+        const pm = paymentMethods.data[0];
+        return {
+          status: true,
+          data: {
+            hasSavedMethod: true,
+            paymentMethodId: pm.id,
+            brand: pm.card?.brand || 'card',
+            last4: pm.card?.last4 || '••••',
+            expMonth: pm.card?.exp_month,
+            expYear: pm.card?.exp_year,
+          },
+        };
+      }
+    } catch (err) {
+      this.logger.warn(`Failed to fetch saved payment methods for user ${userId}`, err);
+    }
+
+    return { status: true, data: { hasSavedMethod: false } };
   }
 
   // ─────────────────────────────────────────────────────────────────────────────
