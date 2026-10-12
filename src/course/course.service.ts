@@ -217,6 +217,17 @@ export class CourseService {
       );
     }
 
+    const visibleBatches = Array.isArray(course.batch)
+      ? course.batch.filter((b) => {
+          if (callingUser && String((callingUser as any).role) === 'teacher' && (callingUser as any).teacherId) {
+            return b.teacher === String((callingUser as any).teacherId);
+          }
+          return true;
+        })
+      : [];
+    const batchesWithTeachers = await this.mapBatchesWithTeacherNames(visibleBatches);
+    const teacherProfile = headTeacher || instructor;
+
     const responseObj = {
       course_id: course._id,
       course_name: courseName,
@@ -232,14 +243,7 @@ export class CourseService {
       course_status: course.course_status,
       demo_classes: course.demo_class,
       live_classes: course.live_classes,
-      batch: Array.isArray(course.batch) 
-        ? course.batch.filter((b) => {
-            if (callingUser && String((callingUser as any).role) === 'teacher' && (callingUser as any).teacherId) {
-              return b.teacher === String((callingUser as any).teacherId);
-            }
-            return true;
-          })
-        : course.batch,
+      batch: batchesWithTeachers,
       learning_points: learningPoints,
       course_learning_points: learningPoints, // alias used by CourseInfoDataProp
       skills_you_gain: skillsYouGain,
@@ -266,16 +270,14 @@ export class CourseService {
       head_teacher_name: headTeacher
         ? `${headTeacher.firstName} ${headTeacher.lastName}`
         : null,
-      head_teacher_image_url: headTeacher?.photo ?? null,
+      head_teacher_image_url: headTeacher?.photo ?? instructor?.photo ?? null,
+      head_teacher_qualification: teacherProfile?.qualification || null,
       course_instructor: instructor
         ? `${instructor.firstName} ${instructor.lastName}`
         : null,
       instructor_id: course.instructor_id,
       course_instructor_image_url: instructor?.photo ?? null,
-      // Stubs for Phase 4
-      meet_your_teacher: instructor
-        ? `${instructor.firstName} ${instructor.lastName}`
-        : null,
+      meet_your_teacher: teacherProfile?.qualification || null,
       related_courses: relatedCoursesData,
       enrolled_status: false,
       favorite: false,
@@ -919,8 +921,8 @@ export class CourseService {
           enrolled_status: enrolledCourseIds.has(c._id.toString()),
           favorite: favoriteCourseIds.has(c._id.toString()),
           favorite_status: favoriteCourseIds.has(c._id.toString()),
-          batch: (c.batch || [])
-            .filter((b) => {
+          batch: await this.mapBatchesWithTeacherNames(
+            (c.batch || []).filter((b) => {
               if (callingUser && String(callingUser.role) === 'teacher' && callingUser.teacherId) {
                 const isHeadOrInstructor =
                   String(c.head_teacher) === String(callingUser.teacherId) ||
@@ -929,12 +931,8 @@ export class CourseService {
                 return String(b.teacher) === String(callingUser.teacherId);
               }
               return true;
-            })
-            .map((b) => ({
-              _id: b._id,
-              batchName: b.batchName,
-              teacher: b.teacher ?? null,
-            })),
+            }),
+          ),
         };
       }),
     );
@@ -1048,6 +1046,87 @@ export class CourseService {
     return { status: true, data: results };
   }
 
+  private async mapBatchesWithTeacherNames(
+    batches: { _id?: Types.ObjectId; batchName?: string; teacher?: string | null }[] = [],
+  ) {
+    const ids = [
+      ...new Set(
+        batches
+          .map((b) => (b.teacher ? String(b.teacher) : ''))
+          .filter((id) => Types.ObjectId.isValid(id)),
+      ),
+    ];
+    const teachers = ids.length
+      ? await this.teacherModel
+          .find({ _id: { $in: ids.map((id) => new Types.ObjectId(id)) } })
+          .select('firstName lastName')
+          .lean()
+      : [];
+    const nameById = new Map(
+      teachers.map((t) => [
+        String(t._id),
+        `${(t as { firstName?: string }).firstName || ''} ${(t as { lastName?: string }).lastName || ''}`.trim(),
+      ]),
+    );
+
+    return batches.map((b) => {
+      const raw = b.teacher ? String(b.teacher) : null;
+      const lookedUp = raw ? nameById.get(raw) : '';
+      const teacher_name = lookedUp
+        ? lookedUp
+        : raw && !Types.ObjectId.isValid(raw)
+          ? raw
+          : null;
+      return {
+        _id: b._id,
+        batchName: b.batchName,
+        teacher: raw,
+        teacher_name,
+      };
+    });
+  }
+
+  private async uploadStudyMaterials(
+    files: Express.Multer.File[] | undefined,
+    folder: string,
+  ) {
+    const studyMaterials: {
+      file_url: string;
+      file_name: string;
+      file_type: string;
+      duration_seconds?: number;
+    }[] = [];
+    if (!files?.length) return studyMaterials;
+
+    for (const file of files) {
+      const uploaded = await this.cloudinary.uploadFile(file, folder);
+      const mime = file.mimetype || '';
+      let file_type = 'file';
+      if (mime.startsWith('video/')) file_type = 'video';
+      else if (mime.startsWith('audio/')) file_type = 'audio';
+      else if (mime === 'application/pdf') file_type = 'pdf';
+      else if (mime.startsWith('image/')) file_type = 'image';
+      else if (
+        mime.includes('word') ||
+        mime.includes('presentation') ||
+        mime.includes('powerpoint')
+      ) {
+        file_type = 'document';
+      }
+      const duration =
+        typeof uploaded.duration === 'number' && uploaded.duration > 0
+          ? Math.round(uploaded.duration)
+          : undefined;
+      studyMaterials.push({
+        file_url: uploaded.secure_url,
+        file_name: file.originalname,
+        file_type,
+        ...(duration ? { duration_seconds: duration } : {}),
+      });
+    }
+    return studyMaterials;
+  }
+
   // ─────────────────────────────────────────────────────────────────────────
   // LESSON CRUD
   // ─────────────────────────────────────────────────────────────────────────
@@ -1055,17 +1134,7 @@ export class CourseService {
   async createLesson(dto: CreateLessonDto, files?: Express.Multer.File[]) {
     await this.guardCourse(dto.course_id);
 
-    const studyMaterials: { file_url: string; file_name: string; file_type: string }[] = [];
-    if (files && files.length > 0) {
-      for (const file of files) {
-        const uploaded = await this.cloudinary.uploadFile(file, 'lms/lessons');
-        studyMaterials.push({
-          file_url: uploaded.secure_url,
-          file_name: file.originalname,
-          file_type: file.mimetype.startsWith('video') ? 'video' : 'pdf',
-        });
-      }
-    }
+    const studyMaterials = await this.uploadStudyMaterials(files, 'lms/lessons');
 
     const lesson = await this.lessonModel.create({
       course_id: new Types.ObjectId(dto.course_id),
@@ -1101,14 +1170,8 @@ export class CourseService {
     const studyMaterials = dto.existing_files ? [...dto.existing_files] : (lesson.studyMaterials ? [...lesson.studyMaterials] : []);
 
     if (files && files.length > 0) {
-      for (const file of files) {
-        const uploaded = await this.cloudinary.uploadFile(file, 'lms/lessons');
-        studyMaterials.push({
-          file_url: uploaded.secure_url,
-          file_name: file.originalname,
-          file_type: file.mimetype.startsWith('video') ? 'video' : 'pdf',
-        });
-      }
+      const uploaded = await this.uploadStudyMaterials(files, 'lms/lessons');
+      studyMaterials.push(...uploaded);
     }
 
     await this.lessonModel.findByIdAndUpdate(dto.lesson_id, {
@@ -1282,17 +1345,7 @@ export class CourseService {
     const lesson = await this.lessonModel.findById(dto.lesson_id);
     if (!lesson) throw new NotFoundException('Lesson not found');
 
-    const studyMaterials: { file_url: string; file_name: string; file_type: string }[] = [];
-    if (files && files.length > 0) {
-      for (const file of files) {
-        const uploaded = await this.cloudinary.uploadFile(file, 'lms/sublessons');
-        studyMaterials.push({
-          file_url: uploaded.secure_url,
-          file_name: file.originalname,
-          file_type: file.mimetype.startsWith('video') ? 'video' : 'pdf',
-        });
-      }
-    }
+    const studyMaterials = await this.uploadStudyMaterials(files, 'lms/sublessons');
 
     const sub = await this.subLessonModel.create({
       course_id: new Types.ObjectId(dto.course_id),
@@ -1327,14 +1380,8 @@ export class CourseService {
     const studyMaterials = dto.existing_files ? [...dto.existing_files] : (sub.studyMaterials ? [...sub.studyMaterials] : []);
 
     if (files && files.length > 0) {
-      for (const file of files) {
-        const uploaded = await this.cloudinary.uploadFile(file, 'lms/sublessons');
-        studyMaterials.push({
-          file_url: uploaded.secure_url,
-          file_name: file.originalname,
-          file_type: file.mimetype.startsWith('video') ? 'video' : 'pdf',
-        });
-      }
+      const uploaded = await this.uploadStudyMaterials(files, 'lms/sublessons');
+      studyMaterials.push(...uploaded);
     }
 
     await this.subLessonModel.findByIdAndUpdate(dto.sublesson_id, {
@@ -2484,16 +2531,25 @@ export class CourseService {
         const headTeacher = c.head_teacher
           ? await this.teacherModel.findById(c.head_teacher).lean()
           : null;
+        const teacherName = headTeacher
+          ? `${(headTeacher as unknown as { firstName?: string; lastName?: string }).firstName || ''} ${(headTeacher as unknown as { firstName?: string; lastName?: string }).lastName || ''}`.trim()
+          : '';
         return {
           course_id: c._id.toString(),
           course_name: c.course_name,
           course_image_url: c.course_image_url || '',
           course_price: c.course_price || 0,
           course_type: c.course_type,
+          course_duration: c.duration || '',
+          average_rating: c.average_rating || 0,
+          enrolled_user_count: c.enrolled_user_count || 0,
           total: c.course_price || 0,
-          head_teacher: headTeacher
-            ? `${(headTeacher as unknown as { firstName?: string; lastName?: string }).firstName || ''} ${(headTeacher as unknown as { firstName?: string; lastName?: string }).lastName || ''}`.trim()
-            : 'Instructor',
+          head_teacher: teacherName || 'Instructor',
+          head_teacher_name: teacherName || 'Instructor',
+          head_teacher_image_url:
+            (headTeacher as unknown as { photo?: string })?.photo || '',
+          favorite: true,
+          favorite_status: true,
           cart_status: false,
         };
       }),
@@ -2613,6 +2669,10 @@ export class CourseService {
         });
 
         // Update the student's batchIds so they appear in instructor lists
+        await this.userModel.updateOne(
+          { _id: new Types.ObjectId(userId), batchIds: null },
+          { $set: { batchIds: [] } },
+        );
         await this.userModel.findByIdAndUpdate(userId, {
           $addToSet: { batchIds: batch._id },
         });

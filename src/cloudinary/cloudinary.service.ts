@@ -2,7 +2,7 @@ import { Injectable, BadRequestException } from '@nestjs/common';
 import { v2 as cloudinary, UploadApiResponse } from 'cloudinary';
 import * as streamifier from 'streamifier';
 
-const ALLOWED_MIME_PREFIXES = ['image/', 'video/', 'application/pdf'];
+const ALLOWED_MIME_PREFIXES = ['image/', 'video/', 'audio/', 'application/pdf'];
 const ALLOWED_MIME_EXACT = [
   'application/msword',
   'application/vnd.openxmlformats-officedocument.wordprocessingml.document',

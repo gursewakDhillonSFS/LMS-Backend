@@ -6,25 +6,25 @@ export type SubLessonDocument = SubLesson & Document;
 @Schema({ timestamps: true, collection: 'sublessons' })
 export class SubLesson {
   @Prop({ type: Types.ObjectId, ref: 'Course', required: true })
-  course_id: Types.ObjectId;
+  course_id!: Types.ObjectId;
 
   @Prop({ type: Types.ObjectId, ref: 'Lesson', required: true })
-  lesson_id: Types.ObjectId;
+  lesson_id!: Types.ObjectId;
 
   @Prop({ required: true, trim: true })
-  sublesson_name: string;
+  sublesson_name!: string;
 
   @Prop({ type: String, default: null })
-  sublesson_description: string | null;
+  sublesson_description!: string | null;
 
   @Prop({ type: String, default: null })
-  file_url: string | null;
+  file_url!: string | null;
 
   @Prop({ type: String, default: null })
-  file_name: string | null;
+  file_name!: string | null;
 
   @Prop({ type: String, default: null })
-  file_type: string | null;
+  file_type!: string | null;
 
   @Prop({
     type: [
@@ -32,20 +32,26 @@ export class SubLesson {
         file_url: { type: String, required: true },
         file_name: { type: String, required: true },
         file_type: { type: String, required: true },
+        duration_seconds: { type: Number, default: null },
       },
     ],
     default: [],
   })
-  studyMaterials: { file_url: string; file_name: string; file_type: string }[];
+  studyMaterials!: {
+    file_url: string;
+    file_name: string;
+    file_type: string;
+    duration_seconds?: number | null;
+  }[];
 
   @Prop({ type: String, default: null })
-  duration: string | null;
+  duration!: string | null;
 
   @Prop({ type: Number, default: 0 })
-  order: number;
+  order!: number;
 
   @Prop({ type: Date, default: () => new Date() })
-  uploaded_at: Date;
+  uploaded_at!: Date;
 }
 
 export const SubLessonSchema = SchemaFactory.createForClass(SubLesson);

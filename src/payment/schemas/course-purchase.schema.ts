@@ -6,51 +6,52 @@ export type CoursePurchaseDocument = CoursePurchase & Document;
 @Schema({ timestamps: true, collection: 'course_purchases' })
 export class CoursePurchase {
   @Prop({ type: Types.ObjectId, ref: 'User', required: true })
-  studentId: Types.ObjectId;
+  studentId!: Types.ObjectId;
 
   @Prop({ type: Types.ObjectId, ref: 'Course', required: true })
-  courseId: Types.ObjectId;
+  courseId!: Types.ObjectId;
 
   @Prop({ type: Types.ObjectId, ref: 'Batch', default: null })
-  batchId: Types.ObjectId | null;
+  batchId!: Types.ObjectId | null;
 
   @Prop({ type: Types.ObjectId, ref: 'Organisation', required: true })
-  organisationId: Types.ObjectId;
+  organisationId!: Types.ObjectId;
 
   @Prop({ type: Types.ObjectId, ref: 'Teacher', default: null })
-  teacherId: Types.ObjectId | null;
+  teacherId!: Types.ObjectId | null;
 
   // ── Financial (all in cents) ────────────────────────────────────────────────
   @Prop({ type: Number, required: true })
-  grossAmountCents: number;
+  grossAmountCents!: number;
 
   @Prop({ type: Number, required: true })
-  platformFeePercent: number; // snapshot at time of purchase (e.g. 5)
+  platformFeePercent!: number; // snapshot at time of purchase (e.g. 5)
 
   @Prop({ type: Number, required: true })
-  platformFeeCents: number;
+  platformFeeCents!: number;
 
   @Prop({ type: Number, required: true })
-  organisationShareCents: number;
+  organisationShareCents!: number;
 
   @Prop({ type: Number, default: 0 })
-  teacherShareCents: number;
+  teacherShareCents!: number;
 
   @Prop({ type: Number, default: 0 })
-  teacherRevenuePercent: number; // snapshot at time of purchase (e.g. 20)
+  teacherRevenuePercent!: number; // snapshot at time of purchase (e.g. 20)
 
   @Prop({ type: String, default: 'usd' })
-  currency: string;
+  currency!: string;
 
   // ── Stripe ──────────────────────────────────────────────────────────────────
-  @Prop({ type: String, default: null })
-  stripeCheckoutSessionId: string | null;
+  // Omit until a session exists. A unique index cannot store multiple explicit nulls.
+  @Prop({ type: String })
+  stripeCheckoutSessionId?: string;
 
   @Prop({ type: String, default: null })
-  stripePaymentIntentId: string | null;
+  stripePaymentIntentId!: string | null;
 
   @Prop({ type: String, default: null })
-  stripeCustomerId: string | null;
+  stripeCustomerId!: string | null;
 
   // ── Status ──────────────────────────────────────────────────────────────────
   @Prop({
@@ -58,17 +59,17 @@ export class CoursePurchase {
     enum: ['pending', 'paid', 'failed', 'refunded', 'cancelled'],
     default: 'pending',
   })
-  status: string;
+  status!: string;
 
   @Prop({ type: Date, default: null })
-  purchasedAt: Date | null;
+  purchasedAt!: Date | null;
 
   @Prop({ type: Date, default: null })
-  refundedAt: Date | null;
+  refundedAt!: Date | null;
 
   // Refund window: 2 days from purchase
   @Prop({ type: Date, default: null })
-  refundDeadline: Date | null;
+  refundDeadline!: Date | null;
 }
 
 export const CoursePurchaseSchema =
@@ -76,7 +77,10 @@ export const CoursePurchaseSchema =
 
 CoursePurchaseSchema.index(
   { stripeCheckoutSessionId: 1 },
-  { unique: true, sparse: true },
+  {
+    unique: true,
+    partialFilterExpression: { stripeCheckoutSessionId: { $type: 'string' } },
+  },
 );
 CoursePurchaseSchema.index({ studentId: 1, courseId: 1 });
 CoursePurchaseSchema.index({ studentId: 1, status: 1 });

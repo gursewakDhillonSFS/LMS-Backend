@@ -6,43 +6,43 @@ export type CertificateDocument = Certificate & Document;
 @Schema({ timestamps: true, collection: 'certificates' })
 export class Certificate {
   @Prop({ type: Types.ObjectId, ref: 'User', required: true })
-  student_id: Types.ObjectId;
+  student_id!: Types.ObjectId;
 
   @Prop({ type: Types.ObjectId, ref: 'Course', required: true })
-  course_id: Types.ObjectId;
+  course_id!: Types.ObjectId;
 
   @Prop({ type: String, required: true })
-  course_name: string;
+  course_name!: string;
 
   @Prop({ type: String, required: true })
-  student_name: string;
+  student_name!: string;
 
   @Prop({ type: Date, default: Date.now })
-  issued_at: Date;
+  issued_at!: Date;
 
   @Prop({ type: String, unique: true })
-  certificate_code: string;
+  certificate_code!: string;
 
-  @Prop({ type: Number, default: 92 })
-  marks_obtained: number;
+  @Prop({ type: Number, default: null })
+  marks_obtained!: number | null;
 
-  @Prop({ type: Number, default: 100 })
-  total_marks: number;
+  @Prop({ type: Number, default: null })
+  total_marks!: number | null;
 
-  @Prop({ type: Number, default: 92 })
-  percentage: number;
+  @Prop({ type: Number, default: null })
+  percentage!: number | null;
 
-  @Prop({ type: String, default: 'A+ (Distinction)' })
-  grade: string;
+  @Prop({ type: String, default: 'Completed' })
+  grade!: string;
 
-  @Prop({ type: String, default: 'Dr. Robert Vance' })
-  instructor_name: string;
+  @Prop({ type: String, default: null })
+  instructor_name!: string | null;
 
   @Prop({ type: String, default: 'SkillBuild LMS' })
-  organisation_name: string;
+  organisation_name!: string;
 
-  @Prop({ type: String, default: 'Theory, Practical Labs & Capstone Assessment' })
-  evaluation_summary: string;
+  @Prop({ type: String, default: null })
+  evaluation_summary!: string | null;
 }
 
 export const CertificateSchema = SchemaFactory.createForClass(Certificate);

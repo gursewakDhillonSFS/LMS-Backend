@@ -15,13 +15,30 @@ export class FreeOpenSourceProvider implements TranslationProvider {
   }
 
   /**
-   * Translates text using free open-source endpoints with cascading fallback
+   * Translates text using free open-source endpoints with cascading fallback.
+   * MyMemory rejects queries longer than 500 characters, so long course
+   * descriptions are split before they are sent.
    */
   async translate(text: string, from = 'en', to: string): Promise<string> {
     if (!text || !text.trim()) return text;
     if (from === to) return text;
 
-    // Strategy 1: Free Open-Source MyMemory API (supports 150+ languages including pa & fr with high accuracy)
+    const chunks = this.splitForQueryLimit(text, 450);
+    if (chunks.length > 1) {
+      const translated = await Promise.all(
+        chunks.map((chunk) => this.translateChunk(chunk, from, to)),
+      );
+      return translated.join('');
+    }
+
+    return this.translateChunk(text, from, to);
+  }
+
+  private async translateChunk(
+    text: string,
+    from: string,
+    to: string,
+  ): Promise<string> {
     try {
       const encodedText = encodeURIComponent(text);
       const url = `https://api.mymemory.translated.net/get?q=${encodedText}&langpair=${from}|${to}`;
@@ -30,12 +47,15 @@ export class FreeOpenSourceProvider implements TranslationProvider {
       if (res.ok) {
         const data: any = await res.json();
         const translated = data?.responseData?.translatedText;
+        const rejected =
+          !translated ||
+          typeof translated !== 'string' ||
+          translated.includes('MYMEMORY WARNING') ||
+          translated.includes('QUERY LENGTH LIMIT') ||
+          data?.responseStatus === 403 ||
+          data?.quotaFinished;
 
-        if (
-          translated &&
-          typeof translated === 'string' &&
-          !translated.includes('MYMEMORY WARNING')
-        ) {
+        if (!rejected) {
           return this.decodeHtmlEntities(translated);
         }
       }
@@ -43,7 +63,6 @@ export class FreeOpenSourceProvider implements TranslationProvider {
       this.logger.warn(`Primary open-source endpoint failed: ${err.message}`);
     }
 
-    // Strategy 2: LibreTranslate Open Instance / Mirror
     try {
       const libreUrl =
         process.env.LIBRETRANSLATE_URL ||
@@ -63,7 +82,7 @@ export class FreeOpenSourceProvider implements TranslationProvider {
 
       if (res.ok) {
         const data: any = await res.json();
-        if (data?.translatedText) {
+        if (data?.translatedText && !String(data.translatedText).includes('QUERY LENGTH LIMIT')) {
           return this.decodeHtmlEntities(data.translatedText);
         }
       }
@@ -71,11 +90,24 @@ export class FreeOpenSourceProvider implements TranslationProvider {
       this.logger.warn(`LibreTranslate endpoint failed: ${err.message}`);
     }
 
-    // If both services are unreachable or down, return source text as safe fallback
     this.logger.warn(
       `All translation endpoints failed for ${from}->${to}. Retaining original text.`,
     );
     return text;
+  }
+
+  private splitForQueryLimit(text: string, maxLen: number): string[] {
+    if (text.length <= maxLen) return [text];
+    const chunks: string[] = [];
+    let rest = text;
+    while (rest.length > maxLen) {
+      let cut = rest.lastIndexOf(' ', maxLen);
+      if (cut < maxLen * 0.5) cut = maxLen;
+      chunks.push(rest.slice(0, cut));
+      rest = rest.slice(cut);
+    }
+    if (rest) chunks.push(rest);
+    return chunks;
   }
 
   async translateBatch(

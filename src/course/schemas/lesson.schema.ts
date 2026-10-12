@@ -6,22 +6,22 @@ export type LessonDocument = Lesson & Document;
 @Schema({ timestamps: true, collection: 'lessons' })
 export class Lesson {
   @Prop({ type: Types.ObjectId, ref: 'Course', required: true })
-  course_id: Types.ObjectId;
+  course_id!: Types.ObjectId;
 
   @Prop({ required: true, trim: true })
-  lesson_name: string;
+  lesson_name!: string;
 
   @Prop({ type: String, default: null })
-  lesson_description: string | null;
+  lesson_description!: string | null;
 
   @Prop({ type: String, default: null })
-  file_url: string | null;
+  file_url!: string | null;
 
   @Prop({ type: String, default: null })
-  file_name: string | null;
+  file_name!: string | null;
 
   @Prop({ type: String, default: null })
-  file_type: string | null;
+  file_type!: string | null;
 
   @Prop({
     type: [
@@ -29,23 +29,29 @@ export class Lesson {
         file_url: { type: String, required: true },
         file_name: { type: String, required: true },
         file_type: { type: String, required: true },
+        duration_seconds: { type: Number, default: null },
       },
     ],
     default: [],
   })
-  studyMaterials: { file_url: string; file_name: string; file_type: string }[];
+  studyMaterials!: {
+    file_url: string;
+    file_name: string;
+    file_type: string;
+    duration_seconds?: number | null;
+  }[];
 
   @Prop({ type: Boolean, default: false })
-  unlock_after_previous: boolean;
+  unlock_after_previous!: boolean;
 
   @Prop({ type: Number, default: 1 })
-  week: number;
+  week!: number;
 
   @Prop({ type: Number, default: 0 })
-  order: number;
+  order!: number;
 
   @Prop({ type: Date, default: () => new Date() })
-  uploaded_at: Date;
+  uploaded_at!: Date;
 }
 
 export const LessonSchema = SchemaFactory.createForClass(Lesson);

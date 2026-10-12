@@ -131,28 +131,27 @@ export class PaymentService {
       throw new BadRequestException('Please select a batch to enroll in this course');
     }
 
+    const resolveTeacher = async (teacherRef: unknown) => {
+      const raw = teacherRef ? String(teacherRef) : '';
+      if (!raw || !Types.ObjectId.isValid(raw)) return null;
+      const teacher = await this.teacherModel.findById(raw).select('_id').lean();
+      return teacher ? (teacher._id as Types.ObjectId) : null;
+    };
+
     if (dto.batch_id) {
+      if (!Types.ObjectId.isValid(dto.batch_id)) {
+        throw new BadRequestException('Invalid batch selected');
+      }
       batchId = new Types.ObjectId(dto.batch_id);
-      // Look up the batch's teacher
       const batchDoc = course.batch?.find(
         (b) => b._id?.toString() === dto.batch_id,
       );
-      if (batchDoc?.teacher) {
-        const teacher = await this.teacherModel
-          .findById(batchDoc.teacher)
-          .lean();
-        if (teacher) teacherId = teacher._id as Types.ObjectId;
-      }
+      teacherId = await resolveTeacher(batchDoc?.teacher);
     } else if (course.batch?.length) {
       batchId = course.batch[0]._id
         ? new Types.ObjectId(course.batch[0]._id)
         : null;
-      if (course.batch[0]?.teacher) {
-        const teacher = await this.teacherModel
-          .findById(course.batch[0].teacher)
-          .lean();
-        if (teacher) teacherId = teacher._id as Types.ObjectId;
-      }
+      teacherId = await resolveTeacher(course.batch[0]?.teacher);
     }
 
     // Calculate revenue split
@@ -330,8 +329,16 @@ export class PaymentService {
     }
 
     // ── Option B: Create Stripe Checkout Session (New Card / Fallback) ──────
+    if (grossCents > 0 && grossCents < 50) {
+      throw new BadRequestException(
+        'Course price is below the minimum card charge of $0.50.',
+      );
+    }
+
     const frontendUrl =
       this.config.get<string>('FRONTEND_URL') || 'http://localhost:3000';
+    const imageUrl = course.course_image_url || '';
+    const checkoutImages = /^https?:\/\//i.test(imageUrl) ? [imageUrl] : undefined;
 
     const sessionParams: Stripe.Checkout.SessionCreateParams = {
       mode: 'payment',
@@ -343,9 +350,7 @@ export class PaymentService {
             unit_amount: grossCents,
             product_data: {
               name: course.course_name || 'Course',
-              images: course.course_image_url
-                ? [course.course_image_url]
-                : undefined,
+              ...(checkoutImages ? { images: checkoutImages } : {}),
             },
           },
         },
@@ -359,20 +364,31 @@ export class PaymentService {
         type: 'course_purchase',
       },
       client_reference_id: String(purchase._id),
-      payment_intent_data: {
-        setup_future_usage: 'off_session',
-      },
-      saved_payment_method_options: {
-        payment_method_save: 'enabled',
-      },
     };
 
     if (stripeCustomerId) {
       sessionParams.customer = stripeCustomerId;
       sessionParams.customer_update = { address: 'auto' };
+      sessionParams.payment_intent_data = { setup_future_usage: 'off_session' };
+      sessionParams.saved_payment_method_options = {
+        payment_method_save: 'enabled',
+      };
     }
 
-    const session = await this.getStripe().checkout.sessions.create(sessionParams);
+    let session: Stripe.Checkout.Session;
+    try {
+      session = await this.getStripe().checkout.sessions.create(sessionParams);
+    } catch (err: any) {
+      purchase.status = 'failed';
+      await purchase.save();
+      this.logger.error(
+        `Stripe checkout failed for course ${courseId}`,
+        err?.message || err,
+      );
+      throw new BadRequestException(
+        err?.raw?.message || err?.message || 'Unable to start checkout. Please try again.',
+      );
+    }
 
     purchase.stripeCheckoutSessionId = session.id;
     await purchase.save();

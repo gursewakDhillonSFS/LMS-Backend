@@ -20,11 +20,11 @@ export class CertificateService {
   ) {}
 
   private async computeEvaluationDetails(studentId: string, course: any) {
-    let marksObtained = 94;
-    let totalMarks = 100;
-    let percentage = 94;
-    let grade = 'A+ (Distinction)';
-    const evalSummary = 'Comprehensive Coursework, Practical Labs & Final Assessment';
+    let marksObtained: number | null = null;
+    let totalMarks: number | null = null;
+    let percentage: number | null = null;
+    let grade = 'Completed';
+    let evalSummary: string | null = null;
 
     try {
       const studentObjId = Types.ObjectId.isValid(studentId) ? new Types.ObjectId(studentId) : null;
@@ -95,36 +95,38 @@ export class CertificateService {
       if (gradedCount > 0 && total > 0) {
         marksObtained = Math.round(earned);
         totalMarks = Math.round(total);
-        percentage = Math.min(100, Math.max(50, Math.round((earned / total) * 100)));
+        percentage = Math.min(100, Math.max(0, Math.round((earned / total) * 100)));
+        evalSummary = `Based on ${gradedCount} graded assignment${gradedCount === 1 ? '' : 's'} and quiz${gradedCount === 1 ? '' : 'zes'}`;
       }
     } catch {
-      // Fall back to default high-achievement metrics
+      // Leave scores empty when assessments cannot be loaded
     }
 
-    if (percentage >= 90) {
-      grade = 'A+ (Distinction)';
-    } else if (percentage >= 80) {
-      grade = 'A (Excellent)';
-    } else if (percentage >= 70) {
-      grade = 'B+ (Very Good)';
-    } else if (percentage >= 60) {
-      grade = 'B (Good)';
-    } else {
-      grade = 'Pass';
+    if (percentage !== null) {
+      if (percentage >= 90) grade = 'A+ (Distinction)';
+      else if (percentage >= 80) grade = 'A (Excellent)';
+      else if (percentage >= 70) grade = 'B+ (Very Good)';
+      else if (percentage >= 60) grade = 'B (Good)';
+      else grade = 'Pass';
     }
 
     // Resolve instructor name
-    let instructorName = 'Dr. Robert Vance, Lead Faculty';
+    let instructorName: string | null = null;
     try {
-      if (course?.batch?.[0]?.teacher && typeof course.batch[0].teacher === 'string') {
-        instructorName = course.batch[0].teacher;
-      } else if (course?.instructor_id || course?.head_teacher || course?.created_by) {
-        const teacherUser = await this.userModel
-          .findById(course.instructor_id || course.head_teacher || course.created_by)
-          .lean();
+      const teacherRef = course?.head_teacher || course?.instructor_id || course?.batch?.[0]?.teacher;
+      if (teacherRef && Types.ObjectId.isValid(String(teacherRef))) {
+        const TeacherModel = this.connection.model('Teacher');
+        const teacher = await TeacherModel.findById(teacherRef).lean();
+        if (teacher) {
+          const name = `${(teacher as any).firstName || ''} ${(teacher as any).lastName || ''}`.trim();
+          if (name) instructorName = name;
+        }
+      }
+      if (!instructorName && course?.created_by && Types.ObjectId.isValid(String(course.created_by))) {
+        const teacherUser = await this.userModel.findById(course.created_by).lean();
         if (teacherUser) {
           const name = `${teacherUser.firstName || ''} ${teacherUser.lastName || ''}`.trim();
-          if (name) instructorName = `${name}, Lead Instructor`;
+          if (name) instructorName = name;
         }
       }
     } catch {
@@ -236,47 +238,42 @@ export class CertificateService {
       ? { $or: [{ student_id: studentObjId }, { student_id: studentId }] }
       : { student_id: studentId };
 
+    const enrollments = await this.connection
+      .collection('batch_enrolled_students')
+      .find(studentFilter)
+      .toArray();
+    const enrolledCourseIds = new Set(
+      enrollments.map((e) => String(e.course_id)).filter(Boolean),
+    );
+
     let certs = await this.certificateModel
       .find(studentFilter)
       .sort({ issued_at: -1 })
       .lean();
 
-    // Auto-issue for any completed courses or progress >= 100%
+    // Issue only for THIS student's completed enrollments.
+    // A second $or must not replace the student filter, or every completed
+    // course in the database is attached to the signed-in student.
     try {
       const issuedCourseIds = new Set(certs.map((c) => String(c.course_id)));
+      const completedProgress = await this.connection
+        .collection('course_progress')
+        .find({
+          $and: [
+            studentFilter,
+            { $or: [{ progress_percent: { $gte: 100 } }, { is_completed: true }] },
+          ],
+        })
+        .toArray();
 
-      const [completedProgress, completedEnrollments] = await Promise.all([
-        this.connection
-          .collection('course_progress')
-          .find({
-            ...studentFilter,
-            $or: [{ progress_percent: { $gte: 100 } }, { is_completed: true }],
-          })
-          .toArray(),
-        this.connection
-          .collection('student_enrollments')
-          .find({
-            ...studentFilter,
-            status: { $in: ['completed', 'passed'] },
-          })
-          .toArray(),
-      ]);
-
-      const candidateCourseIds = new Set<string>();
-      completedProgress.forEach((p) => {
-        if (p.course_id) candidateCourseIds.add(String(p.course_id));
-      });
-      completedEnrollments.forEach((e) => {
-        if (e.course_id) candidateCourseIds.add(String(e.course_id));
-      });
-
-      for (const cId of candidateCourseIds) {
-        if (!issuedCourseIds.has(cId)) {
-          try {
-            await this.issueCertificate(studentId, cId);
-          } catch {
-            // ignore
-          }
+      for (const progress of completedProgress) {
+        const cId = progress.course_id ? String(progress.course_id) : '';
+        if (!cId || !enrolledCourseIds.has(cId) || issuedCourseIds.has(cId)) continue;
+        try {
+          await this.issueCertificate(studentId, cId);
+          issuedCourseIds.add(cId);
+        } catch {
+          // ignore individual failures
         }
       }
 
@@ -288,22 +285,24 @@ export class CertificateService {
       // non-blocking
     }
 
+    const visible = certs.filter((c) => enrolledCourseIds.has(String(c.course_id)));
+
     return {
       status: true,
-      data: certs.map((c: any) => ({
+      data: visible.map((c: any) => ({
         certificate_id: String(c._id),
         course_id: String(c.course_id),
         course_name: c.course_name,
         student_name: c.student_name,
         issued_at: c.issued_at,
         certificate_code: c.certificate_code,
-        marks_obtained: c.marks_obtained ?? 94,
-        total_marks: c.total_marks ?? 100,
-        percentage: c.percentage ?? 94,
-        grade: c.grade || 'A+ (Distinction)',
-        instructor_name: c.instructor_name || 'Dr. Robert Vance, Lead Faculty',
+        marks_obtained: c.marks_obtained ?? null,
+        total_marks: c.total_marks ?? null,
+        percentage: c.percentage ?? null,
+        grade: c.grade || 'Completed',
+        instructor_name: c.instructor_name || null,
         organisation_name: c.organisation_name || 'SkillBuild LMS',
-        evaluation_summary: c.evaluation_summary || 'Comprehensive Coursework & Practical Labs Mastery',
+        evaluation_summary: c.evaluation_summary || null,
       })),
     };
   }
@@ -316,13 +315,13 @@ export class CertificateService {
       status: true,
       data: {
         ...cert,
-        marks_obtained: cert.marks_obtained ?? 94,
-        total_marks: cert.total_marks ?? 100,
-        percentage: cert.percentage ?? 94,
-        grade: cert.grade || 'A+ (Distinction)',
-        instructor_name: cert.instructor_name || 'Dr. Robert Vance, Lead Faculty',
+        marks_obtained: cert.marks_obtained ?? null,
+        total_marks: cert.total_marks ?? null,
+        percentage: cert.percentage ?? null,
+        grade: cert.grade || 'Completed',
+        instructor_name: cert.instructor_name || null,
         organisation_name: cert.organisation_name || 'SkillBuild LMS',
-        evaluation_summary: cert.evaluation_summary || 'Comprehensive Coursework, Practical Labs & Final Assessment',
+        evaluation_summary: cert.evaluation_summary || null,
         is_valid: true,
         validity_status: '100% Authentic & Verified',
         verified_by: 'SkillBuild Credential Verification Authority',
