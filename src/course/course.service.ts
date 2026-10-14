@@ -37,6 +37,10 @@ import {
 } from './schemas/sublesson-translation.schema';
 import { TranslationQueueService } from '../translation/translation-queue.service';
 import { TranslationService } from '../translation/translation.service';
+import {
+  preferTranslation,
+  preferTranslationList,
+} from '../translation/translation-text.util';
 import { RedisService } from '../redis/redis.service';
 import {
   CreateStep1Dto,
@@ -115,18 +119,27 @@ export class CourseService {
       });
     }
 
-    const courseName = translation?.course_name || course.course_name;
-    const aboutCourse = translation?.about_course || course.about_course;
-    const description = translation?.description || course.description;
-    const overview = translation?.overview || course.overview;
-    const learningPoints =
-      translation?.learning_points && translation.learning_points.length > 0
-        ? translation.learning_points
-        : course.learning_points;
-    const skillsYouGain =
-      translation?.skills_you_gain && translation.skills_you_gain.length > 0
-        ? translation.skills_you_gain
-        : course.skills_you_gain;
+    const courseName = preferTranslation(
+      translation?.course_name,
+      course.course_name,
+    );
+    const aboutCourse = preferTranslation(
+      translation?.about_course,
+      course.about_course,
+    );
+    const description = preferTranslation(
+      translation?.description,
+      course.description,
+    );
+    const overview = preferTranslation(translation?.overview, course.overview);
+    const learningPoints = preferTranslationList(
+      translation?.learning_points,
+      course.learning_points,
+    );
+    const skillsYouGain = preferTranslationList(
+      translation?.skills_you_gain,
+      course.skills_you_gain,
+    );
 
     // Populate head teacher
     let headTeacher: TeacherDocument | null = null;
@@ -174,9 +187,9 @@ export class CourseService {
                 status: { $in: ['completed', 'outdated'] },
               })
               .lean();
-            if (relTrans?.course_name) {
-              relCourseName = relTrans.course_name;
-            }
+            relCourseName =
+              preferTranslation(relTrans?.course_name, c.course_name) ||
+              c.course_name;
           }
 
           return {
@@ -871,8 +884,9 @@ export class CourseService {
         })
         .lean();
       for (const td of transDocs) {
-        if (td.course_name) {
-          translationMap.set(td.course_id.toString(), td.course_name);
+        const localizedName = preferTranslation(td.course_name, null);
+        if (localizedName) {
+          translationMap.set(td.course_id.toString(), localizedName);
         }
       }
     }
@@ -1276,7 +1290,7 @@ export class CourseService {
           .lean(),
       ]);
 
-      if (cTrans?.overview) overview = cTrans.overview;
+      overview = preferTranslation(cTrans?.overview, overview) || '';
       for (const lt of lTrans) {
         lessonTransMap.set(lt.lesson_id.toString(), {
           name: lt.lesson_name,
@@ -1295,9 +1309,11 @@ export class CourseService {
       const transL = lessonTransMap.get(String((l as any)._id));
       return {
         lesson_id: (l as unknown as { _id: Types.ObjectId })._id,
-        lesson_name: transL?.name || l.lesson_name,
-        lesson_description:
-          transL?.desc !== undefined ? transL.desc : l.lesson_description,
+        lesson_name: preferTranslation(transL?.name, l.lesson_name),
+        lesson_description: preferTranslation(
+          transL?.desc,
+          l.lesson_description,
+        ),
         studyMaterials: l.studyMaterials || [],
         unlock_after_previous: l.unlock_after_previous,
         week: (l as any).week || 1,
@@ -1313,11 +1329,14 @@ export class CourseService {
             const transS = sublessonTransMap.get(String((s as any)._id));
             return {
               sublesson_id: (s as unknown as { _id: Types.ObjectId })._id,
-              sublesson_name: transS?.name || s.sublesson_name,
-              sublesson_description:
-                transS?.desc !== undefined
-                  ? transS.desc
-                  : s.sublesson_description,
+              sublesson_name: preferTranslation(
+                transS?.name,
+                s.sublesson_name,
+              ),
+              sublesson_description: preferTranslation(
+                transS?.desc,
+                s.sublesson_description,
+              ),
               studyMaterials: s.studyMaterials || [],
               duration: s.duration,
               uploaded_at: s.uploaded_at,
@@ -1332,6 +1351,41 @@ export class CourseService {
         total_weeks: course ? (course as any).total_weeks || 4 : 4,
         overview,
         lessons: lessonData,
+      },
+    };
+  }
+
+  /**
+   * Public course outline. File URLs stay on the authenticated lesson API.
+   */
+  async getPublicCurriculum(courseId: string, locale = 'en') {
+    const full = await this.getLessonsWithSublessons(courseId, locale);
+    const hideFile = (material: any) => ({
+      file_name: material?.file_name || '',
+      file_type: material?.file_type || 'file',
+      duration_seconds: material?.duration_seconds ?? null,
+    });
+
+    return {
+      status: true,
+      data: {
+        total_weeks: full.data.total_weeks,
+        overview: full.data.overview,
+        lessons: (full.data.lessons || []).map((lesson: any) => ({
+          lesson_id: lesson.lesson_id,
+          lesson_name: lesson.lesson_name,
+          lesson_description: lesson.lesson_description,
+          week: lesson.week,
+          order: lesson.order,
+          studyMaterials: (lesson.studyMaterials || []).map(hideFile),
+          sublessons: (lesson.sublessons || []).map((sub: any) => ({
+            sublesson_id: sub.sublesson_id,
+            sublesson_name: sub.sublesson_name,
+            sublesson_description: sub.sublesson_description,
+            duration: sub.duration,
+            studyMaterials: (sub.studyMaterials || []).map(hideFile),
+          })),
+        })),
       },
     };
   }
@@ -2760,17 +2814,21 @@ export class CourseService {
 
     const reviewCount = reviews.length;
     const totalRatingSum = reviews.reduce((sum, r) => sum + (r.rating || 0), 0);
-    const averageRating = reviewCount > 0 ? Number((totalRatingSum / reviewCount).toFixed(1)) : 5.0;
+    const averageRating = reviewCount > 0 ? Number((totalRatingSum / reviewCount).toFixed(1)) : 0;
 
     const formatted = reviews.map((r: any) => {
-      const user = r.user_id;
+      const user = r.user_id && typeof r.user_id === 'object' ? r.user_id : null;
+      const userId = user?._id || r.user_id;
       const userName = r.user_name || (user ? `${user.firstName || ''} ${user.lastName || ''}`.trim() : 'Verified Learner');
       return {
         _id: String(r._id),
+        review_id: String(r._id),
         course_id: String(r.course_id),
+        user_id: userId ? String(userId) : '',
         user_name: userName,
         user_image: user?.photo || null,
-        rating: r.rating || 5,
+        user_avatar: user?.photo || null,
+        rating: r.rating || 0,
         review: r.review,
         created_at: (r.createdAt || new Date()).toISOString(),
       };
@@ -2825,6 +2883,58 @@ export class CourseService {
       user_name: resolvedName,
     });
 
+    await this.refreshCourseRating(courseId);
+
+    return { status: true, message: 'Review created successfully', data: review };
+  }
+
+  async updateCourseReview(
+    userId: string,
+    courseId: string,
+    rating: number,
+    reviewText: string,
+  ) {
+    if (!Types.ObjectId.isValid(courseId)) {
+      throw new BadRequestException('Invalid courseId format');
+    }
+    if (rating < 1 || rating > 5) {
+      throw new BadRequestException('Rating must be between 1 and 5');
+    }
+
+    const existing = await this.reviewModel.findOne({
+      user_id: new Types.ObjectId(userId),
+      course_id: new Types.ObjectId(courseId),
+    });
+    if (!existing) {
+      throw new NotFoundException('You have not reviewed this course yet');
+    }
+
+    existing.rating = rating;
+    existing.review = reviewText;
+    await existing.save();
+    await this.refreshCourseRating(courseId);
+
+    return { status: true, message: 'Review updated successfully', data: existing };
+  }
+
+  async deleteCourseReview(userId: string, courseId: string) {
+    if (!Types.ObjectId.isValid(courseId)) {
+      throw new BadRequestException('Invalid courseId format');
+    }
+
+    const deleted = await this.reviewModel.findOneAndDelete({
+      user_id: new Types.ObjectId(userId),
+      course_id: new Types.ObjectId(courseId),
+    });
+    if (!deleted) {
+      throw new NotFoundException('You have not reviewed this course yet');
+    }
+
+    await this.refreshCourseRating(courseId);
+    return { status: true, message: 'Review deleted successfully' };
+  }
+
+  private async refreshCourseRating(courseId: string) {
     const stats = await this.reviewModel.aggregate([
       { $match: { course_id: new Types.ObjectId(courseId) } },
       {
@@ -2836,14 +2946,12 @@ export class CourseService {
       },
     ]);
 
-    if (stats[0]) {
-      await this.courseModel.findByIdAndUpdate(courseId, {
-        average_rating: Math.round(stats[0].average_rating * 10) / 10,
-        review_count: stats[0].review_count,
-      });
-    }
-
-    return { status: true, message: 'Review created successfully', data: review };
+    await this.courseModel.findByIdAndUpdate(courseId, {
+      average_rating: stats[0]
+        ? Math.round(stats[0].average_rating * 10) / 10
+        : 0,
+      review_count: stats[0]?.review_count || 0,
+    });
   }
 
   // ─────────────────────────────────────────────────────────────────────────

@@ -27,6 +27,10 @@ import {
 } from '../course/schemas/sublesson-translation.schema';
 import { CompositeTranslationProvider } from './providers/composite.provider';
 import { TranslationQueueService } from './translation-queue.service';
+import {
+  preferTranslation,
+  preferTranslationList,
+} from './translation-text.util';
 
 @Injectable()
 export class TranslationService implements OnModuleInit {
@@ -173,12 +177,18 @@ export class TranslationService implements OnModuleInit {
       { course_id: course._id, locale: targetLocale },
       {
         $set: {
-          course_name: translatedName,
-          about_course: translatedAbout,
-          description: translatedDesc,
-          overview: translatedOverview,
-          learning_points: translatedLearningPoints,
-          skills_you_gain: translatedSkills,
+          course_name: preferTranslation(translatedName, course.course_name),
+          about_course: preferTranslation(translatedAbout, course.about_course),
+          description: preferTranslation(translatedDesc, course.description),
+          overview: preferTranslation(translatedOverview, course.overview),
+          learning_points: preferTranslationList(
+            translatedLearningPoints,
+            course.learning_points,
+          ),
+          skills_you_gain: preferTranslationList(
+            translatedSkills,
+            course.skills_you_gain,
+          ),
           status: 'completed',
           source: 'machine_generated',
           content_hash: currentHash,
@@ -224,8 +234,8 @@ export class TranslationService implements OnModuleInit {
           {
             $set: {
               course_id: courseId,
-              lesson_name: lName,
-              lesson_description: lDesc,
+              lesson_name: preferTranslation(lName, l.lesson_name),
+              lesson_description: preferTranslation(lDesc, l.lesson_description),
               status: 'completed',
               source: 'machine_generated',
               translated_at: new Date(),
@@ -263,8 +273,11 @@ export class TranslationService implements OnModuleInit {
               $set: {
                 course_id: courseId,
                 lesson_id: l._id,
-                sublesson_name: sName,
-                sublesson_description: sDesc,
+                sublesson_name: preferTranslation(sName, s.sublesson_name),
+                sublesson_description: preferTranslation(
+                  sDesc,
+                  s.sublesson_description,
+                ),
                 status: 'completed',
                 source: 'machine_generated',
                 translated_at: new Date(),

@@ -366,6 +366,16 @@ export class CourseController {
    * GET /auth/course/v1/get-sublesson-lesson?course_id=
    * Returns lessons with embedded sub-lessons array
    */
+  @Get('public-curriculum')
+  async getPublicCurriculum(
+    @Query('course_id') courseId: string,
+    @Req() req: any,
+    @Query() query: Record<string, string>,
+  ) {
+    const locale = this.extractLocale(req, query);
+    return this.courseService.getPublicCurriculum(courseId, locale);
+  }
+
   @UseGuards(JwtAuthGuard)
   @Get('get-sublesson-lesson')
   async getLessonsWithSublessons(
